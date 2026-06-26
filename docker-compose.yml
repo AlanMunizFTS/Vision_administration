@@ -10,4 +10,6 @@ services:
       DB_PORT: ${API_DB_PORT:-5432}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./reports:/app/reports
     restart: unless-stopped

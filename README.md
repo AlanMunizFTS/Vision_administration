@@ -120,3 +120,12 @@ Parametros utiles:
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-05-27T00:00:00" --end-at "2026-06-26T23:59:59"
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a --source-id 2
 ```
+
+Si estas usando Docker, reconstruye el contenedor y ejecuta el script dentro de `vision-api`:
+
+```powershell
+docker compose up --build -d
+docker compose exec vision-api python scripts/generate_excel_report.py
+```
+
+El volumen `./reports:/app/reports` hace que el Excel quede disponible en la carpeta local `reports`.
