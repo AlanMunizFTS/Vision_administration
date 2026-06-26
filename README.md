@@ -1,6 +1,6 @@
-# Vision Administration API
+# Vision Administration
 
-API local de solo lectura para consultar reportes desde `public.model_results_central`.
+API y dashboard local de solo lectura para consultar reportes desde `public.model_results_central`.
 
 ## Ejecutar con Docker
 
@@ -22,16 +22,27 @@ O directamente:
 docker compose up --build
 ```
 
-En Docker, la API queda viva mientras el compose siga corriendo. Para detenerla, usa `Ctrl+C`; si la levantaste en segundo plano con `-d`, usa:
+En Docker, quedan disponibles:
+
+```text
+Dashboard: http://127.0.0.1:3000
+API:       http://127.0.0.1:8000
+Docs API:  http://127.0.0.1:8000/docs
+```
+
+La pagina divide los reportes por `source_station`, muestra resumen global, graficas por hora/dia, top 3 defectos y tabla de piezas por JSN.
+
+Los servicios quedan vivos mientras el compose siga corriendo. Para detenerlos, usa `Ctrl+C`; si los levantaste en segundo plano con `-d`, usa:
 
 ```powershell
 docker compose down
 ```
 
-Para ver los logs del contenedor:
+Para ver los logs:
 
 ```powershell
 docker compose logs vision-api
+docker compose logs vision-web
 ```
 
 Para seguirlos en vivo:
@@ -83,10 +94,14 @@ http://127.0.0.1:8000/docs
 - `GET /api/v1/summary`
 - `GET /api/v1/defects`
 - `GET /api/v1/timeseries?bucket=hour`
+- `GET /api/v1/stations/summary`
+- `GET /api/v1/stations/defects`
+- `GET /api/v1/stations/timeseries?bucket=hour`
+- `GET /api/v1/reports/excel`
 
 ## Reglas
 
-- La pieza se identifica por `jsn`.
+- La pieza se identifica por `source_station` + `jsn`.
 - `captured_at` sale del JSN usando el formato `MMDDYYHHMMSS` en posiciones 6 a 17.
 - Una pieza es `OK` si todas sus detecciones tienen `class_name = OK`.
 - Una pieza es `NOK` si tiene al menos una deteccion no-OK.
@@ -111,7 +126,7 @@ Con la API levantada, genera un reporte agregado de los ultimos 30 dias:
 .\venv\Scripts\python.exe scripts\generate_excel_report.py
 ```
 
-El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`.
+El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`. El Excel incluye hojas globales y hojas separadas por `source_station`.
 
 Parametros utiles:
 

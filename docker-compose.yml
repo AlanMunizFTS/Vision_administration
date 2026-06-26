@@ -13,3 +13,13 @@ services:
     volumes:
       - ./reports:/app/reports
     restart: unless-stopped
+
+  vision-web:
+    build:
+      context: ./frontend
+    container_name: vision_administration_web
+    depends_on:
+      - vision-api
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    restart: unless-stopped

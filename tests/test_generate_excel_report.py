@@ -32,6 +32,8 @@ class FakeSession:
         self.calls.append((url, dict(params or {}), timeout))
         if url.endswith("/health"):
             return FakeResponse({"api": "ok", "database": "ok"})
+        if url.endswith("/api/v1/options"):
+            return FakeResponse({"source_stations": ["station-a"]})
         if url.endswith("/api/v1/summary"):
             return FakeResponse(
                 {
@@ -48,6 +50,23 @@ class FakeSession:
                     "items": [
                         {"class_name": "scratch", "piece_count": 2, "max_confidence": 0.91, "avg_confidence": 0.8},
                         {"class_name": "dent", "piece_count": 1, "max_confidence": 0.82, "avg_confidence": 0.7},
+                    ]
+                }
+            )
+        if url.endswith("/api/v1/pieces"):
+            return FakeResponse(
+                {
+                    "items": [
+                        {
+                            "source_station": params.get("source_station", "station-a"),
+                            "jsn": "JSN001",
+                            "model_result": "NOK",
+                            "captured_at": "2026-06-26 10:00:00",
+                            "main_defect": "scratch",
+                            "main_confidence": 0.91,
+                            "image_count": 4,
+                            "detections_count": 5,
+                        }
                     ]
                 }
             )
@@ -82,16 +101,18 @@ class GenerateExcelReportTests(unittest.TestCase):
             output_dir=output_dir,
         )
 
-    def test_fetch_report_data_uses_aggregated_endpoints_only(self):
+    def test_fetch_report_data_uses_report_endpoints_and_station_detail(self):
         session = FakeSession()
         data = fetch_report_data(self.make_params(), session=session)
 
         urls = [url for url, _, _ in session.calls]
+        self.assertIn("http://testserver/api/v1/options", urls)
         self.assertIn("http://testserver/api/v1/summary", urls)
         self.assertIn("http://testserver/api/v1/defects", urls)
-        self.assertEqual(urls.count("http://testserver/api/v1/timeseries"), 2)
-        self.assertFalse(any(url.endswith("/api/v1/pieces") for url in urls))
+        self.assertEqual(urls.count("http://testserver/api/v1/timeseries"), 4)
+        self.assertTrue(any(url.endswith("/api/v1/pieces") for url in urls))
         self.assertEqual(data["summary"]["total_pieces"], 10)
+        self.assertEqual(data["station_reports"][0]["source_station"], "station-a")
 
     def test_fetch_report_data_sends_common_filters_to_each_report_endpoint(self):
         params = ReportParams(
@@ -105,7 +126,11 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         fetch_report_data(params, session=session)
 
-        report_calls = [call for call in session.calls if not call[0].endswith("/health")]
+        report_calls = [
+            call
+            for call in session.calls
+            if not call[0].endswith("/health") and not call[0].endswith("/api/v1/options")
+        ]
         for _, query_params, _ in report_calls:
             self.assertEqual(query_params["start_at"], params.start_at)
             self.assertEqual(query_params["end_at"], params.end_at)
@@ -119,7 +144,18 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         self.assertEqual(
             workbook.sheetnames,
-            ["Dashboard", "Resumen", "Por hora", "Por dia", "Defectos"],
+            [
+                "Dashboard",
+                "Resumen",
+                "Por hora",
+                "Por dia",
+                "Defectos",
+                "Resumen - station-a",
+                "Por hora - station-a",
+                "Por dia - station-a",
+                "Defectos - station-a",
+                "Piezas - station-a",
+            ],
         )
         self.assertIn("tblResumen", workbook["Resumen"].tables)
         self.assertIn("tblPorHora", workbook["Por hora"].tables)
@@ -128,6 +164,7 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertGreaterEqual(len(workbook["Dashboard"]._charts), 2)
         self.assertGreaterEqual(len(workbook["Resumen"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Defectos"]._charts), 1)
+        self.assertIn("tblPiezas_station_a", workbook["Piezas - station-a"].tables)
 
     def test_generate_report_writes_xlsx_file(self):
         session = FakeSession()

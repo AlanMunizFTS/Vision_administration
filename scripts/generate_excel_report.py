@@ -1,4 +1,5 @@
 import argparse
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -92,7 +93,7 @@ def fetch_report_data(report_params, session=None):
     if report_params.source_id is not None:
         common_params["source_id"] = report_params.source_id
 
-    return {
+    data = {
         "summary": _request_json(
             session,
             f"{report_params.api_url}/api/v1/summary",
@@ -113,7 +114,47 @@ def fetch_report_data(report_params, session=None):
             f"{report_params.api_url}/api/v1/timeseries",
             params={**common_params, "bucket": "day"},
         ),
+        "station_reports": [],
     }
+
+    options = _request_json(session, f"{report_params.api_url}/api/v1/options")
+    stations = options.get("source_stations") or []
+    if report_params.source_station:
+        stations = [report_params.source_station]
+
+    for station in stations:
+        station_params = {**common_params, "source_station": station}
+        station_report = {
+            "source_station": station,
+            "summary": _request_json(
+                session,
+                f"{report_params.api_url}/api/v1/summary",
+                params=station_params,
+            ),
+            "defects": _request_json(
+                session,
+                f"{report_params.api_url}/api/v1/defects",
+                params=station_params,
+            ),
+            "timeseries_hour": _request_json(
+                session,
+                f"{report_params.api_url}/api/v1/timeseries",
+                params={**station_params, "bucket": "hour"},
+            ),
+            "timeseries_day": _request_json(
+                session,
+                f"{report_params.api_url}/api/v1/timeseries",
+                params={**station_params, "bucket": "day"},
+            ),
+            "pieces": _request_json(
+                session,
+                f"{report_params.api_url}/api/v1/pieces",
+                params={**station_params, "limit": 5000},
+            ),
+        }
+        data["station_reports"].append(station_report)
+
+    return data
 
 
 def _normalize_number(value, default=0):
@@ -128,7 +169,28 @@ def _normalize_int(value):
 
 
 def _safe_sheet_title(title):
-    return title[:31]
+    cleaned = re.sub(r"[\[\]:*?/\\]", "-", str(title or "Sheet")).strip()
+    return (cleaned or "Sheet")[:31]
+
+
+def _unique_sheet_title(workbook, title):
+    base = _safe_sheet_title(title)
+    if base not in workbook.sheetnames:
+        return base
+    for idx in range(2, 100):
+        suffix = f" {idx}"
+        candidate = f"{base[:31 - len(suffix)]}{suffix}"
+        if candidate not in workbook.sheetnames:
+            return candidate
+    raise ReportError(f"Unable to create unique Excel sheet title for {title}")
+
+
+def _safe_table_name(name):
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", str(name or "Table"))
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned or cleaned[0].isdigit():
+        cleaned = f"tbl_{cleaned}"
+    return cleaned[:200]
 
 
 def _style_sheet(sheet):
@@ -166,7 +228,7 @@ def _add_table(sheet, table_name, max_col=None):
 
 
 def _write_timeseries_sheet(workbook, title, table_name, rows, chart_kind):
-    sheet = workbook.create_sheet(_safe_sheet_title(title))
+    sheet = workbook.create_sheet(_unique_sheet_title(workbook, title))
     sheet.append(["Periodo", "Total", "OK", "NOK", "% OK", "% NOK"])
     for row in rows:
         total = _normalize_int(row.get("total_pieces"))
@@ -191,7 +253,7 @@ def _write_timeseries_sheet(workbook, title, table_name, rows, chart_kind):
         sheet.cell(row=row_idx, column=6).number_format = "0.00%"
 
     _style_sheet(sheet)
-    _add_table(sheet, table_name)
+    _add_table(sheet, _safe_table_name(table_name))
     _fit_columns(sheet)
 
     chart = LineChart() if chart_kind == "line" else BarChart()
@@ -208,12 +270,12 @@ def _write_timeseries_sheet(workbook, title, table_name, rows, chart_kind):
     return sheet
 
 
-def _write_defects_sheet(workbook, defects):
+def _write_defects_sheet(workbook, defects, title="Defectos", table_name="tblDefectos"):
     rows = sorted(
         list(defects or []),
         key=lambda item: (-_normalize_int(item.get("piece_count")), str(item.get("class_name") or "")),
     )
-    sheet = workbook.create_sheet("Defectos")
+    sheet = workbook.create_sheet(_unique_sheet_title(workbook, title))
     sheet.append(["Defecto", "Piezas", "Confianza maxima", "Confianza promedio"])
     for row in rows:
         sheet.append(
@@ -228,7 +290,7 @@ def _write_defects_sheet(workbook, defects):
         sheet.append(["Sin datos", 0, 0, 0])
 
     _style_sheet(sheet)
-    _add_table(sheet, "tblDefectos")
+    _add_table(sheet, _safe_table_name(table_name))
     _fit_columns(sheet)
 
     top_count = min(max(len(rows), 1), 3)
@@ -243,6 +305,43 @@ def _write_defects_sheet(workbook, defects):
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(categories)
     sheet.add_chart(chart, "F2")
+    return sheet
+
+
+def _write_pieces_sheet(workbook, pieces, title, table_name):
+    rows = list(pieces or [])
+    sheet = workbook.create_sheet(_unique_sheet_title(workbook, title))
+    sheet.append(
+        [
+            "Source Station",
+            "JSN",
+            "Resultado",
+            "Capturado",
+            "Defecto principal",
+            "Confianza",
+            "Imagenes",
+            "Detecciones",
+        ]
+    )
+    for row in rows:
+        sheet.append(
+            [
+                row.get("source_station") or "",
+                row.get("jsn") or "",
+                row.get("model_result") or "",
+                row.get("captured_at") or "",
+                row.get("main_defect") or "",
+                _normalize_number(row.get("main_confidence")),
+                _normalize_int(row.get("image_count")),
+                _normalize_int(row.get("detections_count")),
+            ]
+        )
+    if not rows:
+        sheet.append(["Sin datos", "", "", "", "", 0, 0, 0])
+
+    _style_sheet(sheet)
+    _add_table(sheet, _safe_table_name(table_name))
+    _fit_columns(sheet)
     return sheet
 
 
@@ -265,8 +364,8 @@ def _write_summary_sheet(workbook, report_params, summary):
     sheet.append(["Metrica", "Valor"])
     for label, value in rows:
         sheet.append([label, value])
-    sheet["B6"].number_format = "0.00%"
     sheet["B7"].number_format = "0.00%"
+    sheet["B8"].number_format = "0.00%"
 
     sheet["D1"] = "Resultado"
     sheet["E1"] = "Piezas"
@@ -288,6 +387,34 @@ def _write_summary_sheet(workbook, report_params, summary):
     pie.height = 8
     pie.width = 10
     sheet.add_chart(pie, "G2")
+    return sheet
+
+
+def _write_station_summary_sheet(workbook, station_label, report_params, summary):
+    sheet = workbook.create_sheet(_unique_sheet_title(workbook, f"Resumen - {station_label}"))
+    total = _normalize_int(summary.get("total_pieces"))
+    ok = _normalize_int(summary.get("ok_pieces"))
+    nok = _normalize_int(summary.get("nok_pieces"))
+
+    rows = [
+        ("Source station", station_label),
+        ("Periodo inicio", report_params.start_at),
+        ("Periodo fin", report_params.end_at),
+        ("Total piezas", total),
+        ("OK", ok),
+        ("NOK", nok),
+        ("% OK", ok / total if total else 0),
+        ("% NOK", nok / total if total else 0),
+    ]
+    sheet.append(["Metrica", "Valor"])
+    for label, value in rows:
+        sheet.append([label, value])
+    sheet["B8"].number_format = "0.00%"
+    sheet["B9"].number_format = "0.00%"
+
+    _style_sheet(sheet)
+    _add_table(sheet, _safe_table_name(f"tblResumen_{station_label}"), max_col=2)
+    _fit_columns(sheet)
     return sheet
 
 
@@ -364,6 +491,41 @@ def build_workbook(report_params, data):
     _write_timeseries_sheet(workbook, "Por dia", "tblPorDia", day_rows, "line")
     _write_defects_sheet(workbook, defects)
     _write_dashboard_sheet(workbook, report_params, summary, defects)
+    for station_report in data.get("station_reports") or []:
+        station_label = str(station_report.get("source_station") or "Sin estacion")
+        station_key = _safe_table_name(station_label)
+        _write_station_summary_sheet(
+            workbook,
+            station_label,
+            report_params,
+            station_report.get("summary") or {},
+        )
+        _write_timeseries_sheet(
+            workbook,
+            f"Por hora - {station_label}",
+            f"tblHora_{station_key}",
+            (station_report.get("timeseries_hour") or {}).get("items") or [],
+            "bar",
+        )
+        _write_timeseries_sheet(
+            workbook,
+            f"Por dia - {station_label}",
+            f"tblDia_{station_key}",
+            (station_report.get("timeseries_day") or {}).get("items") or [],
+            "line",
+        )
+        _write_defects_sheet(
+            workbook,
+            (station_report.get("defects") or {}).get("items") or [],
+            title=f"Defectos - {station_label}",
+            table_name=f"tblDefectos_{station_key}",
+        )
+        _write_pieces_sheet(
+            workbook,
+            (station_report.get("pieces") or {}).get("items") or [],
+            title=f"Piezas - {station_label}",
+            table_name=f"tblPiezas_{station_key}",
+        )
     return workbook
 
 

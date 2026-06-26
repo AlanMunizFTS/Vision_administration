@@ -132,11 +132,12 @@ WITH raw AS (
 ),
 ranked_defects AS (
     SELECT
+        source_station,
         jsn,
         class_name,
         confidence,
         ROW_NUMBER() OVER (
-            PARTITION BY jsn
+            PARTITION BY source_station, jsn
             ORDER BY confidence DESC, created_at DESC NULLS LAST, central_id DESC
         ) AS defect_rank
     FROM raw
@@ -144,6 +145,7 @@ ranked_defects AS (
 ),
 pieces AS (
     SELECT
+        raw.source_station,
         raw.jsn,
         CASE
             WHEN COUNT(*) FILTER (WHERE UPPER(raw.class_name) <> 'OK') > 0 THEN 'NOK'
@@ -152,7 +154,6 @@ pieces AS (
         MIN(raw.captured_at) AS captured_at,
         MIN(raw.created_at) AS created_at_first,
         MAX(raw.created_at) AS created_at_last,
-        MIN(raw.source_station) AS source_station,
         ARRAY_AGG(DISTINCT raw.source_id ORDER BY raw.source_id) AS source_ids,
         COUNT(DISTINCT raw.img_name) AS image_count,
         COUNT(*) AS detections_count,
@@ -160,9 +161,10 @@ pieces AS (
         selected.confidence AS main_confidence
     FROM raw
     LEFT JOIN ranked_defects selected
-      ON selected.jsn = raw.jsn
+      ON selected.source_station IS NOT DISTINCT FROM raw.source_station
+     AND selected.jsn = raw.jsn
      AND selected.defect_rank = 1
-    GROUP BY raw.jsn, selected.class_name, selected.confidence
+    GROUP BY raw.source_station, raw.jsn, selected.class_name, selected.confidence
 )
 """
 
@@ -278,6 +280,30 @@ def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=N
     return normalize_row(db.fetch_one(query, params) or {})
 
 
+def get_station_summary(db, start_at=None, end_at=None, source_id=None, jsn=None):
+    where_sql, params = build_piece_filters(
+        start_at=start_at,
+        end_at=end_at,
+        source_id=source_id,
+        jsn=jsn,
+    )
+    query = f"""
+    {piece_cte()}
+    SELECT
+        source_station,
+        COUNT(*) AS total_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'OK')::float / COUNT(*) END AS pct_ok,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'NOK')::float / COUNT(*) END AS pct_nok
+    FROM pieces
+    {where_sql}
+    GROUP BY source_station
+    ORDER BY source_station ASC NULLS LAST
+    """
+    return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
+
+
 def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=None, jsn=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
@@ -298,6 +324,30 @@ def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=N
     {"AND" if where_sql else "WHERE"} model_result = 'NOK'
     GROUP BY COALESCE(main_defect, 'UNCLASSIFIED')
     ORDER BY piece_count DESC, class_name ASC
+    """
+    return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
+
+
+def get_station_defects(db, start_at=None, end_at=None, source_id=None, jsn=None):
+    where_sql, params = build_piece_filters(
+        start_at=start_at,
+        end_at=end_at,
+        source_id=source_id,
+        jsn=jsn,
+    )
+    query = f"""
+    {piece_cte()}
+    SELECT
+        source_station,
+        COALESCE(main_defect, 'UNCLASSIFIED') AS class_name,
+        COUNT(*) AS piece_count,
+        MAX(main_confidence) AS max_confidence,
+        AVG(main_confidence) AS avg_confidence
+    FROM pieces
+    {where_sql}
+    {"AND" if where_sql else "WHERE"} model_result = 'NOK'
+    GROUP BY source_station, COALESCE(main_defect, 'UNCLASSIFIED')
+    ORDER BY source_station ASC NULLS LAST, piece_count DESC, class_name ASC
     """
     return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
 
@@ -333,6 +383,41 @@ def get_timeseries(
     {"AND" if where_sql else "WHERE"} captured_at IS NOT NULL
     GROUP BY date_trunc(%s, captured_at)
     ORDER BY bucket_start ASC
+    """
+    rows = db.fetch(query, [bucket, *params, bucket])
+    return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
+
+
+def get_station_timeseries(
+    db,
+    start_at=None,
+    end_at=None,
+    source_id=None,
+    jsn=None,
+    bucket="hour",
+):
+    if bucket not in {"hour", "day"}:
+        raise ValueError("bucket must be 'hour' or 'day'")
+
+    where_sql, params = build_piece_filters(
+        start_at=start_at,
+        end_at=end_at,
+        source_id=source_id,
+        jsn=jsn,
+    )
+    query = f"""
+    {piece_cte()}
+    SELECT
+        source_station,
+        date_trunc(%s, captured_at) AS bucket_start,
+        COUNT(*) AS total_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces
+    FROM pieces
+    {where_sql}
+    {"AND" if where_sql else "WHERE"} captured_at IS NOT NULL
+    GROUP BY source_station, date_trunc(%s, captured_at)
+    ORDER BY source_station ASC NULLS LAST, bucket_start ASC
     """
     rows = db.fetch(query, [bucket, *params, bucket])
     return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
