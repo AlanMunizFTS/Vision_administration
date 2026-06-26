@@ -457,7 +457,11 @@ function App() {
   }
 
   function downloadExcel() {
-    window.location.href = `/api/v1/reports/excel${buildQuery(apiFilters)}`;
+    window.location.href = `/api/v1/reports/excel${buildQuery({
+      start_at: apiFilters.start_at,
+      end_at: apiFilters.end_at,
+      source_station: apiFilters.source_station
+    })}`;
   }
 
   const stations = stationList(data);

@@ -1,16 +1,107 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
 
 from openpyxl import load_workbook
 
 from scripts.generate_excel_report import (
+    DEFAULT_DAYS,
     ReportParams,
     build_workbook,
+    default_period,
     fetch_report_data,
     generate_report,
 )
+
+
+SAMPLE_REJECT_SUMMARY = {
+    "stations": [
+        {
+            "source_station": "station-a",
+            "total_pieces": 10,
+            "ok_pieces": 7,
+            "nok_pieces": 3,
+            "pct_ok": 0.7,
+            "pct_nok": 0.3,
+        }
+    ],
+    "daily": [
+        {
+            "source_station": "station-a",
+            "reject_date": "2026-06-25",
+            "total_pieces": 4,
+            "ok_pieces": 3,
+            "nok_pieces": 1,
+            "pct_ok": 0.75,
+            "pct_nok": 0.25,
+        },
+        {
+            "source_station": "station-a",
+            "reject_date": "2026-06-26",
+            "total_pieces": 6,
+            "ok_pieces": 4,
+            "nok_pieces": 2,
+            "pct_ok": 0.667,
+            "pct_nok": 0.333,
+        },
+    ],
+    "condition_periods": [
+        {
+            "source_station": "station-a",
+            "reject_date": "2026-06-25",
+            "class_name": "scratch",
+            "nok_pieces": 1,
+            "ok_pieces": 0,
+            "total_pieces": 1,
+        },
+        {
+            "source_station": "station-a",
+            "reject_date": "2026-06-26",
+            "class_name": "scratch",
+            "nok_pieces": 1,
+            "ok_pieces": 0,
+            "total_pieces": 1,
+        },
+        {
+            "source_station": "station-a",
+            "reject_date": "2026-06-26",
+            "class_name": "dent",
+            "nok_pieces": 1,
+            "ok_pieces": 0,
+            "total_pieces": 1,
+        },
+    ],
+    "condition_totals": [
+        {"source_station": "station-a", "class_name": "scratch", "nok_pieces": 2},
+        {"source_station": "station-a", "class_name": "dent", "nok_pieces": 1},
+    ],
+    "top3_history": [
+        {
+            "source_station": "station-a",
+            "class_name": "scratch",
+            "total_nok_pieces": 2,
+            "class_rank": 1,
+            "reject_date": "2026-06-25",
+            "nok_pieces": 1,
+        },
+        {
+            "source_station": "station-a",
+            "class_name": "scratch",
+            "total_nok_pieces": 2,
+            "class_rank": 1,
+            "reject_date": "2026-06-26",
+            "nok_pieces": 1,
+        },
+        {
+            "source_station": "station-a",
+            "class_name": "dent",
+            "total_nok_pieces": 1,
+            "class_rank": 2,
+            "reject_date": "2026-06-26",
+            "nok_pieces": 1,
+        },
+    ],
+}
 
 
 class FakeResponse:
@@ -32,139 +123,60 @@ class FakeSession:
         self.calls.append((url, dict(params or {}), timeout))
         if url.endswith("/health"):
             return FakeResponse({"api": "ok", "database": "ok"})
-        if url.endswith("/api/v1/options"):
-            return FakeResponse({"source_stations": ["station-a"]})
-        if url.endswith("/api/v1/summary"):
-            return FakeResponse(
-                {
-                    "total_pieces": 10,
-                    "ok_pieces": 7,
-                    "nok_pieces": 3,
-                    "pct_ok": 0.7,
-                    "pct_nok": 0.3,
-                }
-            )
-        if url.endswith("/api/v1/defects"):
-            return FakeResponse(
-                {
-                    "items": [
-                        {"class_name": "scratch", "piece_count": 2, "max_confidence": 0.91, "avg_confidence": 0.8},
-                        {"class_name": "dent", "piece_count": 1, "max_confidence": 0.82, "avg_confidence": 0.7},
-                    ]
-                }
-            )
-        if url.endswith("/api/v1/pieces"):
-            return FakeResponse(
-                {
-                    "items": [
-                        {
-                            "source_station": params.get("source_station", "station-a"),
-                            "jsn": "JSN001",
-                            "model_result": "NOK",
-                            "captured_at": "2026-06-26 10:00:00",
-                            "main_defect": "scratch",
-                            "main_confidence": 0.91,
-                            "image_count": 4,
-                            "detections_count": 5,
-                        }
-                    ]
-                }
-            )
-        if url.endswith("/api/v1/timeseries") and params.get("bucket") == "hour":
-            return FakeResponse(
-                {
-                    "bucket": "hour",
-                    "items": [
-                        {"bucket_start": "2026-06-26 10:00:00", "total_pieces": 4, "ok_pieces": 3, "nok_pieces": 1},
-                        {"bucket_start": "2026-06-26 11:00:00", "total_pieces": 6, "ok_pieces": 4, "nok_pieces": 2},
-                    ],
-                }
-            )
-        if url.endswith("/api/v1/timeseries") and params.get("bucket") == "day":
-            return FakeResponse(
-                {
-                    "bucket": "day",
-                    "items": [
-                        {"bucket_start": "2026-06-26 00:00:00", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3},
-                    ],
-                }
-            )
+        if url.endswith("/api/v1/reject-summary"):
+            return FakeResponse(SAMPLE_REJECT_SUMMARY)
         raise AssertionError(f"Unexpected URL: {url}")
 
 
 class GenerateExcelReportTests(unittest.TestCase):
-    def make_params(self, output_dir="reports"):
+    def make_params(self, output_dir="reports", source_station=None):
         return ReportParams(
             api_url="http://testserver",
-            start_at="2026-05-27 00:00:00",
+            start_at="2026-06-19 00:00:00",
             end_at="2026-06-26 23:59:59",
+            source_station=source_station,
             output_dir=output_dir,
         )
 
-    def test_fetch_report_data_uses_report_endpoints_and_station_detail(self):
+    def test_default_period_uses_last_seven_days_full_day_bounds(self):
+        start_at, end_at = default_period()
+
+        self.assertEqual(DEFAULT_DAYS, 7)
+        self.assertEqual((end_at.date() - start_at.date()).days, 7)
+        self.assertEqual((start_at.hour, start_at.minute, start_at.second), (0, 0, 0))
+        self.assertEqual((end_at.hour, end_at.minute, end_at.second), (23, 59, 59))
+
+    def test_fetch_report_data_uses_frontend_reject_summary_endpoint(self):
         session = FakeSession()
-        data = fetch_report_data(self.make_params(), session=session)
+        data = fetch_report_data(self.make_params(source_station="station-a"), session=session)
 
-        urls = [url for url, _, _ in session.calls]
-        self.assertIn("http://testserver/api/v1/options", urls)
-        self.assertIn("http://testserver/api/v1/summary", urls)
-        self.assertIn("http://testserver/api/v1/defects", urls)
-        self.assertEqual(urls.count("http://testserver/api/v1/timeseries"), 4)
-        self.assertTrue(any(url.endswith("/api/v1/pieces") for url in urls))
-        self.assertEqual(data["summary"]["total_pieces"], 10)
-        self.assertEqual(data["station_reports"][0]["source_station"], "station-a")
-
-    def test_fetch_report_data_sends_common_filters_to_each_report_endpoint(self):
-        params = ReportParams(
-            api_url="http://testserver",
-            start_at="2026-05-27 00:00:00",
-            end_at="2026-06-26 23:59:59",
-            source_station="station-a",
-            source_id=2,
-        )
-        session = FakeSession()
-
-        fetch_report_data(params, session=session)
-
-        report_calls = [
-            call
-            for call in session.calls
-            if not call[0].endswith("/health") and not call[0].endswith("/api/v1/options")
-        ]
-        for _, query_params, _ in report_calls:
-            self.assertEqual(query_params["start_at"], params.start_at)
-            self.assertEqual(query_params["end_at"], params.end_at)
-            self.assertEqual(query_params["source_station"], "station-a")
-            self.assertEqual(query_params["source_id"], 2)
-
-    def test_build_workbook_creates_expected_sheets_tables_and_charts(self):
-        session = FakeSession()
-        params = self.make_params()
-        workbook = build_workbook(params, fetch_report_data(params, session=session))
-
+        self.assertEqual(data["daily"][0]["reject_date"], "2026-06-25")
         self.assertEqual(
-            workbook.sheetnames,
+            session.calls,
             [
-                "Dashboard",
-                "Resumen",
-                "Por hora",
-                "Por dia",
-                "Defectos",
-                "Resumen - station-a",
-                "Por hora - station-a",
-                "Por dia - station-a",
-                "Defectos - station-a",
-                "Piezas - station-a",
+                ("http://testserver/health", {}, 20),
+                (
+                    "http://testserver/api/v1/reject-summary",
+                    {
+                        "start_at": "2026-06-19 00:00:00",
+                        "end_at": "2026-06-26 23:59:59",
+                        "source_station": "station-a",
+                    },
+                    20,
+                ),
             ],
         )
-        self.assertIn("tblResumen", workbook["Resumen"].tables)
-        self.assertIn("tblPorHora", workbook["Por hora"].tables)
+
+    def test_build_workbook_creates_frontend_sheets_tables_and_charts(self):
+        workbook = build_workbook(self.make_params(), SAMPLE_REJECT_SUMMARY)
+
+        self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
         self.assertIn("tblPorDia", workbook["Por dia"].tables)
-        self.assertIn("tblDefectos", workbook["Defectos"].tables)
-        self.assertGreaterEqual(len(workbook["Dashboard"]._charts), 2)
-        self.assertGreaterEqual(len(workbook["Resumen"]._charts), 1)
-        self.assertGreaterEqual(len(workbook["Defectos"]._charts), 1)
-        self.assertIn("tblPiezas_station_a", workbook["Piezas - station-a"].tables)
+        self.assertTrue(workbook["Per Condition"].tables)
+        self.assertTrue(workbook["Top 3 Historico"].tables)
+        self.assertGreaterEqual(len(workbook["Por dia"]._charts), 1)
+        self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
+        self.assertGreaterEqual(len(workbook["Top 3 Historico"]._charts), 1)
 
     def test_generate_report_writes_xlsx_file(self):
         session = FakeSession()
@@ -173,22 +185,26 @@ class GenerateExcelReportTests(unittest.TestCase):
 
             self.assertTrue(Path(output_path).exists())
             workbook = load_workbook(output_path)
-            self.assertIn("Dashboard", workbook.sheetnames)
-            self.assertEqual(workbook["Resumen"]["B4"].value, 10)
+            self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
+            self.assertEqual(workbook["Por dia"]["A2"].value, "2026-06-25")
 
     def test_empty_data_still_creates_workbook(self):
         params = self.make_params()
         data = {
-            "summary": {"total_pieces": 0, "ok_pieces": 0, "nok_pieces": 0},
-            "defects": {"items": []},
-            "timeseries_hour": {"items": []},
-            "timeseries_day": {"items": []},
+            "stations": [],
+            "daily": [],
+            "condition_periods": [],
+            "condition_totals": [],
+            "top3_history": [],
         }
 
         workbook = build_workbook(params, data)
 
-        self.assertEqual(workbook["Por hora"]["A2"].value, "Sin datos")
-        self.assertEqual(workbook["Defectos"]["A2"].value, "Sin datos")
+        self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
+        self.assertEqual(workbook["Por dia"]["A2"].value, "Sin datos")
+        self.assertTrue(workbook["Por dia"].tables)
+        self.assertTrue(workbook["Per Condition"].tables)
+        self.assertTrue(workbook["Top 3 Historico"].tables)
 
 
 if __name__ == "__main__":

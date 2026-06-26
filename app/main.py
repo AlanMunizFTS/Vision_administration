@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app import reports
 from app.db import close_db, get_db
-from scripts.generate_excel_report import ReportParams, build_workbook
+from scripts.generate_excel_report import ReportParams, build_workbook, default_period
 
 
 app = FastAPI(
@@ -258,40 +258,17 @@ def reject_summary(
         handle_report_error(exc)
 
 
-def _collect_excel_data(db, start_at, end_at, source_station, source_id, jsn):
-    common = {
-        "start_at": start_at,
-        "end_at": end_at,
-        "source_station": source_station,
-        "source_id": source_id,
-        "jsn": jsn,
-    }
-    data = {
-        "summary": reports.get_summary(db, **common),
-        "defects": reports.get_defects(db, **common),
-        "timeseries_hour": reports.get_timeseries(db, **common, bucket="hour"),
-        "timeseries_day": reports.get_timeseries(db, **common, bucket="day"),
-        "station_reports": [],
-    }
+def _excel_period(start_at, end_at):
+    if start_at and end_at:
+        return start_at, end_at
+    if start_at or end_at:
+        raise ValueError("start_at and end_at must be used together")
 
-    options = reports.get_options(db)
-    stations = options.get("source_stations") or []
-    if source_station:
-        stations = [source_station]
-
-    for station in stations:
-        station_common = {**common, "source_station": station}
-        data["station_reports"].append(
-            {
-                "source_station": station,
-                "summary": reports.get_summary(db, **station_common),
-                "defects": reports.get_defects(db, **station_common),
-                "timeseries_hour": reports.get_timeseries(db, **station_common, bucket="hour"),
-                "timeseries_day": reports.get_timeseries(db, **station_common, bucket="day"),
-                "pieces": reports.get_pieces(db, **station_common, limit=5000, offset=0),
-            }
-        )
-    return data
+    default_start, default_end = default_period()
+    return (
+        default_start.isoformat(sep=" ", timespec="seconds"),
+        default_end.isoformat(sep=" ", timespec="seconds"),
+    )
 
 
 @app.get("/api/v1/reports/excel")
@@ -304,14 +281,19 @@ def excel_report(
     db=Depends(db_dependency),
 ):
     try:
+        start_at, end_at = _excel_period(start_at, end_at)
         report_params = ReportParams(
             api_url="local",
-            start_at=start_at or "",
-            end_at=end_at or "",
+            start_at=start_at,
+            end_at=end_at,
             source_station=source_station,
-            source_id=source_id,
         )
-        data = _collect_excel_data(db, start_at, end_at, source_station, source_id, jsn)
+        data = reports.get_reject_summary(
+            db,
+            start_at=start_at,
+            end_at=end_at,
+            source_station=source_station,
+        )
         workbook = build_workbook(report_params, data)
     except ValueError as exc:
         handle_report_error(exc)

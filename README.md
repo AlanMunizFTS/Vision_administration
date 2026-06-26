@@ -97,6 +97,7 @@ http://127.0.0.1:8000/docs
 - `GET /api/v1/stations/summary`
 - `GET /api/v1/stations/defects`
 - `GET /api/v1/stations/timeseries?bucket=hour`
+- `GET /api/v1/reject-summary`
 - `GET /api/v1/reports/excel`
 
 ## Reglas
@@ -120,21 +121,23 @@ print(response.json())
 
 ## Reporte Excel
 
-Con la API levantada, genera un reporte agregado de los ultimos 30 dias:
+Con la API levantada, genera un reporte basado en las mismas pestañas del frontend para los ultimos 7 dias:
 
 ```powershell
 .\venv\Scripts\python.exe scripts\generate_excel_report.py
 ```
 
-El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`. El Excel incluye hojas globales y hojas separadas por `source_station`.
+El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`. El Excel incluye las hojas `Por dia`, `Per Condition` y `Top 3 Historico`, con tablas y autofiltros basicos de Excel.
 
 Parametros utiles:
 
 ```powershell
-.\venv\Scripts\python.exe scripts\generate_excel_report.py --days 30
-.\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-05-27T00:00:00" --end-at "2026-06-26T23:59:59"
-.\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a --source-id 2
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --days 7
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-06-19T00:00:00" --end-at "2026-06-26T23:59:59"
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a
 ```
+
+Desde el frontend, la descarga de Excel usa solo los filtros de fecha y `source_station`. El filtro `JSN` afecta la vista de la pagina, pero no la exportacion.
 
 Si estas usando Docker, reconstruye el contenedor y ejecuta el script dentro de `vision-api`:
 
