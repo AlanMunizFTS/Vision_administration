@@ -13,6 +13,16 @@ class FakeDb:
         return self.rows
 
 
+class SequencedDb:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def fetch(self, query, params=None):
+        self.calls.append((query, params or []))
+        return self.responses[len(self.calls) - 1]
+
+
 class ReportsTests(unittest.TestCase):
     def test_piece_cte_partitions_by_station_and_jsn(self):
         query = reports.piece_cte()
@@ -50,6 +60,40 @@ class ReportsTests(unittest.TestCase):
         query, params = db.calls[0]
         self.assertIn("GROUP BY source_station, date_trunc", query)
         self.assertEqual(params, ["day", "day"])
+
+    def test_reject_summary_returns_excel_shaped_collections(self):
+        db = SequencedDb(
+            [
+                [{"source_station": "Tesla 1 - Left", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
+                [{"source_station": "Tesla 1 - Left", "reject_date": "2026-06-01", "pct_nok": 0.3}],
+                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
+                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
+                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
+            ]
+        )
+
+        result = reports.get_reject_summary(db, source_station="Tesla 1 - Left")
+
+        self.assertEqual(set(result), {"stations", "daily", "condition_periods", "condition_totals", "top3_history"})
+        self.assertEqual(result["stations"][0]["source_station"], "Tesla 1 - Left")
+        self.assertEqual(len(db.calls), 5)
+        for _, params in db.calls:
+            self.assertEqual(params, ["Tesla 1 - Left"])
+
+    def test_reject_summary_groups_by_day_station_and_top3_class(self):
+        db = SequencedDb([[], [], [], [], []])
+
+        reports.get_reject_summary(db)
+
+        daily_query = db.calls[1][0]
+        condition_query = db.calls[2][0]
+        top3_query = db.calls[4][0]
+        self.assertIn("date_trunc('day', captured_at)::date", daily_query)
+        self.assertIn("GROUP BY source_station, date_trunc('day', captured_at)::date", daily_query)
+        self.assertIn("day_bounds", condition_query)
+        self.assertIn("CASE WHEN model_result = 'OK' THEN 'OK' ELSE condition_name END", condition_query)
+        self.assertIn("ROW_NUMBER() OVER", top3_query)
+        self.assertIn("class_rank <= 3", top3_query)
 
 
 if __name__ == "__main__":

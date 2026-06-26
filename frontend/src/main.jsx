@@ -4,9 +4,12 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,7 +18,13 @@ import {
 import { Download, RefreshCw, Search } from "lucide-react";
 import "./styles.css";
 
-const PAGE_SIZE = 100;
+const TABS = [
+  { id: "daily", label: "Por dia" },
+  { id: "conditions", label: "Per Condition" },
+  { id: "top3", label: "Top 3 Historico" }
+];
+
+const COLORS = ["#2f6f9f", "#c9564a", "#6f8f3f", "#d39b32", "#7259a4", "#3f8f88", "#8a5c3b", "#69717c"];
 
 function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
@@ -56,218 +65,287 @@ function percentFormat(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
+function dateLabel(value) {
+  return String(value || "").slice(0, 10);
+}
+
 function stationName(value) {
   return value || "Sin estacion";
 }
 
-function chartRows(items = []) {
-  return items.map((item) => ({
-    ...item,
-    label: String(item.bucket_start || "").slice(0, 16),
-    total_pieces: Number(item.total_pieces || 0),
-    ok_pieces: Number(item.ok_pieces || 0),
-    nok_pieces: Number(item.nok_pieces || 0)
-  }));
-}
-
-function topDefects(items = []) {
-  return [...items]
-    .sort((a, b) => Number(b.piece_count || 0) - Number(a.piece_count || 0))
-    .slice(0, 3)
-    .map((item) => ({
-      ...item,
-      piece_count: Number(item.piece_count || 0)
-    }));
-}
-
-function groupByStation(items = []) {
+function groupBy(items = [], key) {
   return items.reduce((acc, item) => {
-    const key = item.source_station || "";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(item);
+    const groupKey = item[key] || "";
+    if (!acc[groupKey]) acc[groupKey] = [];
+    acc[groupKey].push(item);
     return acc;
   }, {});
 }
 
-function KpiStrip({ summary }) {
-  const total = Number(summary?.total_pieces || 0);
+function stationList(data) {
+  const names = new Set();
+  for (const row of data?.stations || []) names.add(row.source_station || "");
+  for (const row of data?.daily || []) names.add(row.source_station || "");
+  for (const row of data?.condition_totals || []) names.add(row.source_station || "");
+  for (const row of data?.top3_history || []) names.add(row.source_station || "");
+  return [...names].sort((a, b) => stationName(a).localeCompare(stationName(b)));
+}
+
+function dailyChartRows(data, stations) {
+  const byDate = {};
+  for (const row of data?.daily || []) {
+    const day = dateLabel(row.reject_date);
+    if (!byDate[day]) byDate[day] = { reject_date: day };
+    byDate[day][row.source_station || ""] = Number(row.pct_nok || 0) * 100;
+  }
+  return Object.values(byDate).sort((a, b) => a.reject_date.localeCompare(b.reject_date)).map((row) => {
+    for (const station of stations) {
+      if (row[station] === undefined) row[station] = null;
+    }
+    return row;
+  });
+}
+
+function topHistoryRows(rows = []) {
+  const byDate = {};
+  for (const row of rows) {
+    const day = dateLabel(row.reject_date);
+    if (!byDate[day]) byDate[day] = { reject_date: day };
+    byDate[day][row.class_name] = Number(row.nok_pieces || 0);
+  }
+  return Object.values(byDate).sort((a, b) => a.reject_date.localeCompare(b.reject_date));
+}
+
+function classNames(rows = []) {
+  return [...new Set(rows.map((row) => row.class_name).filter(Boolean))];
+}
+
+function TabButton({ tab, active, onClick }) {
   return (
-    <div className="kpi-strip">
-      <Kpi label="Total" value={numberFormat(total)} />
-      <Kpi label="OK" value={numberFormat(summary?.ok_pieces)} tone="ok" />
-      <Kpi label="NOK" value={numberFormat(summary?.nok_pieces)} tone="nok" />
-      <Kpi label="% OK" value={percentFormat(summary?.pct_ok)} />
-      <Kpi label="% NOK" value={percentFormat(summary?.pct_nok)} />
-    </div>
+    <button type="button" className={`tab-button ${active ? "active" : ""}`} onClick={onClick}>
+      {tab.label}
+    </button>
   );
 }
 
-function Kpi({ label, value, tone }) {
-  return (
-    <div className={`kpi ${tone || ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function Empty({ label = "Sin datos" }) {
+  return <div className="empty">{label}</div>;
 }
 
-function DataChart({ title, type, rows }) {
-  const safeRows = chartRows(rows);
+function DailyTab({ data, stations }) {
+  const rows = dailyChartRows(data, stations);
+  const byStation = groupBy(data?.daily || [], "source_station");
+
   return (
-    <section className="panel chart-panel">
-      <div className="panel-title">{title}</div>
-      <div className="chart-wrap">
-        {safeRows.length ? (
-          <ResponsiveContainer width="100%" height="100%">
-            {type === "line" ? (
-              <LineChart data={safeRows} margin={{ top: 14, right: 18, bottom: 8, left: 0 }}>
+    <section className="tab-panel">
+      <section className="panel">
+        <div className="panel-title">Tasa de rechazo (% NOK) por dia</div>
+        <div className="chart-wrap tall">
+          {rows.length ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={rows} margin={{ top: 14, right: 24, bottom: 8, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
+                <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
+                <Tooltip formatter={(value) => (value === null ? "" : `${Number(value).toFixed(1)}%`)} />
                 <Legend />
-                <Line type="monotone" dataKey="ok_pieces" name="OK" stroke="#2f7d50" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="nok_pieces" name="NOK" stroke="#b94b48" strokeWidth={2} dot={false} />
+                {stations.map((station, index) => (
+                  <Line
+                    key={station || "blank"}
+                    type="monotone"
+                    dataKey={station}
+                    name={stationName(station)}
+                    stroke={COLORS[index % COLORS.length]}
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
               </LineChart>
-            ) : (
-              <BarChart data={safeRows} margin={{ top: 14, right: 18, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="ok_pieces" name="OK" fill="#2f7d50" stackId="pieces" />
-                <Bar dataKey="nok_pieces" name="NOK" fill="#b94b48" stackId="pieces" />
-              </BarChart>
-            )}
-          </ResponsiveContainer>
-        ) : (
-          <div className="empty">Sin datos</div>
-        )}
-      </div>
-    </section>
-  );
-}
+            </ResponsiveContainer>
+          ) : (
+            <Empty />
+          )}
+        </div>
+      </section>
 
-function DefectTopChart({ rows }) {
-  const data = topDefects(rows);
-  return (
-    <section className="panel chart-panel">
-      <div className="panel-title">Top 3 defectos</div>
-      <div className="chart-wrap compact">
-        {data.length ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 12, right: 20, bottom: 8, left: 24 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis dataKey="class_name" type="category" width={96} tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Bar dataKey="piece_count" name="Piezas" fill="#557aa5" />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="empty">Sin defectos</div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function DefectsTable({ rows }) {
-  return (
-    <section className="panel">
-      <div className="panel-title">Defectos</div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Defecto</th>
-              <th>Piezas</th>
-              <th>Conf. max</th>
-              <th>Conf. prom</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(rows || []).length ? (
-              rows.map((row) => (
-                <tr key={`${row.source_station || "global"}-${row.class_name}`}>
-                  <td>{row.class_name || "UNCLASSIFIED"}</td>
-                  <td>{numberFormat(row.piece_count)}</td>
-                  <td>{Number(row.max_confidence || 0).toFixed(3)}</td>
-                  <td>{Number(row.avg_confidence || 0).toFixed(3)}</td>
-                </tr>
-              ))
-            ) : (
+      <section className="panel">
+        <div className="table-wrap daily">
+          <table className="matrix-table">
+            <thead>
               <tr>
-                <td colSpan="4" className="empty-cell">Sin datos</td>
+                <th rowSpan="2">Date</th>
+                {stations.map((station) => (
+                  <th key={station || "blank"} colSpan="5">{stationName(station)}</th>
+                ))}
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function PiecesTable({ rows }) {
-  return (
-    <section className="panel wide">
-      <div className="panel-title">Piezas</div>
-      <div className="table-wrap pieces">
-        <table>
-          <thead>
-            <tr>
-              <th>JSN</th>
-              <th>Resultado</th>
-              <th>Capturado</th>
-              <th>Defecto principal</th>
-              <th>Confianza</th>
-              <th>Imagenes</th>
-              <th>Detecciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(rows || []).length ? (
-              rows.map((row) => (
-                <tr key={`${row.source_station || "global"}-${row.jsn}`}>
-                  <td>{row.jsn}</td>
-                  <td><span className={`status ${row.model_result}`}>{row.model_result}</span></td>
-                  <td>{row.captured_at || ""}</td>
-                  <td>{row.main_defect || ""}</td>
-                  <td>{row.main_confidence ? Number(row.main_confidence).toFixed(3) : ""}</td>
-                  <td>{numberFormat(row.image_count)}</td>
-                  <td>{numberFormat(row.detections_count)}</td>
-                </tr>
-              ))
-            ) : (
               <tr>
-                <td colSpan="7" className="empty-cell">Sin piezas</td>
+                {stations.flatMap((station) => ["OK", "NOK", "Total", "% OK", "% NOK"].map((metric) => (
+                  <th key={`${station}-${metric}`}>{metric}</th>
+                )))}
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.length ? (
+                rows.map((chartRow) => (
+                  <tr key={chartRow.reject_date}>
+                    <td>{chartRow.reject_date}</td>
+                    {stations.flatMap((station) => {
+                      const row = (byStation[station] || []).find((item) => dateLabel(item.reject_date) === chartRow.reject_date);
+                      return [
+                        <td key={`${station}-ok-${chartRow.reject_date}`}>{numberFormat(row?.ok_pieces)}</td>,
+                        <td key={`${station}-nok-${chartRow.reject_date}`}>{numberFormat(row?.nok_pieces)}</td>,
+                        <td key={`${station}-total-${chartRow.reject_date}`}>{numberFormat(row?.total_pieces)}</td>,
+                        <td key={`${station}-pct-ok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_ok) : ""}</td>,
+                        <td key={`${station}-pct-nok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_nok) : ""}</td>
+                      ];
+                    })}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={1 + stations.length * 5} className="empty-cell">Sin datos</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   );
 }
 
-function StationSection({ report }) {
+function ConditionsTab({ data, stations }) {
+  const periodsByStation = groupBy(data?.condition_periods || [], "source_station");
+  const totalsByStation = groupBy(data?.condition_totals || [], "source_station");
+
   return (
-    <section className="station-section">
-      <div className="station-header">
-        <h2>{stationName(report.source_station)}</h2>
-        <span>{numberFormat(report.summary?.total_pieces)} piezas</span>
-      </div>
-      <KpiStrip summary={report.summary} />
-      <div className="grid two">
-        <DataChart title="Por hora" type="bar" rows={report.hourRows} />
-        <DataChart title="Por dia" type="line" rows={report.dayRows} />
-      </div>
-      <div className="grid two">
-        <DefectTopChart rows={report.defects} />
-        <DefectsTable rows={report.defects} />
-      </div>
-      <PiecesTable rows={report.pieces} />
+    <section className="station-grid">
+      {stations.length ? stations.map((station) => {
+        const totals = totalsByStation[station] || [];
+        const periods = periodsByStation[station] || [];
+        return (
+          <section className="panel station-card" key={station || "blank"}>
+            <div className="panel-title">{stationName(station)}</div>
+            <div className="condition-layout">
+              <div className="chart-wrap pie">
+                {totals.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={totals} dataKey="nok_pieces" nameKey="class_name" outerRadius={92} label>
+                        {totals.map((_, index) => (
+                          <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => numberFormat(value)} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <Empty label="Sin rechazos" />
+                )}
+              </div>
+              <div className="table-wrap condition">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Periodo inicio</th>
+                      <th>Periodo fin</th>
+                      <th>Class Name</th>
+                      <th>OK</th>
+                      <th>NOK</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {periods.length ? periods.map((row, index) => (
+                      <tr key={`${station}-${row.reject_date}-${row.class_name}-${index}`}>
+                        <td>{dateLabel(row.reject_date)}</td>
+                        <td>{String(row.period_start || "").slice(0, 19)}</td>
+                        <td>{String(row.period_end || "").slice(0, 19)}</td>
+                        <td>{row.class_name}</td>
+                        <td>{numberFormat(row.ok_pieces)}</td>
+                        <td>{numberFormat(row.nok_pieces)}</td>
+                        <td>{numberFormat(row.total_pieces)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan="7" className="empty-cell">Sin datos</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        );
+      }) : <Empty />}
+    </section>
+  );
+}
+
+function Top3Tab({ data, stations }) {
+  const historyByStation = groupBy(data?.top3_history || [], "source_station");
+
+  return (
+    <section className="station-grid">
+      {stations.length ? stations.map((station) => {
+        const history = historyByStation[station] || [];
+        const classes = classNames(history);
+        const rows = topHistoryRows(history);
+        const totals = classes.map((name) => {
+          const first = history.find((row) => row.class_name === name);
+          return { class_name: name, total_nok_pieces: Number(first?.total_nok_pieces || 0) };
+        });
+        return (
+          <section className="panel station-card" key={station || "blank"}>
+            <div className="panel-title">{stationName(station)} - Top 3 NOK por dia</div>
+            <div className="chart-wrap top3">
+              {rows.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={rows} margin={{ top: 14, right: 20, bottom: 8, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
+                    <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(value) => numberFormat(value)} />
+                    <Legend />
+                    {classes.map((name, index) => (
+                      <Bar key={name} dataKey={name} name={name} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <Empty />
+              )}
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Top</th>
+                    <th>Class Name</th>
+                    <th>NOK acumulado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {totals.length ? totals.map((row, index) => (
+                    <tr key={`${station}-${row.class_name}`}>
+                      <td>{index + 1}</td>
+                      <td>{row.class_name}</td>
+                      <td>{numberFormat(row.total_nok_pieces)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan="3" className="empty-cell">Sin datos</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      }) : <Empty />}
     </section>
   );
 }
@@ -281,6 +359,7 @@ function App() {
     source_id: "",
     jsn: ""
   });
+  const [activeTab, setActiveTab] = useState("daily");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -313,66 +392,8 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const stationBaseFilters = { ...apiFilters };
-      delete stationBaseFilters.source_station;
-      const [
-        summary,
-        defects,
-        hour,
-        day,
-        stationSummary,
-        stationDefects,
-        stationHour,
-        stationDay
-      ] = await Promise.all([
-        fetchJson(`/api/v1/summary${buildQuery(apiFilters)}`),
-        fetchJson(`/api/v1/defects${buildQuery(apiFilters)}`),
-        fetchJson(`/api/v1/timeseries${buildQuery(apiFilters, { bucket: "hour" })}`),
-        fetchJson(`/api/v1/timeseries${buildQuery(apiFilters, { bucket: "day" })}`),
-        fetchJson(`/api/v1/stations/summary${buildQuery(stationBaseFilters)}`),
-        fetchJson(`/api/v1/stations/defects${buildQuery(stationBaseFilters)}`),
-        fetchJson(`/api/v1/stations/timeseries${buildQuery(stationBaseFilters, { bucket: "hour" })}`),
-        fetchJson(`/api/v1/stations/timeseries${buildQuery(stationBaseFilters, { bucket: "day" })}`)
-      ]);
-
-      let stationRows = stationSummary.items || [];
-      if (apiFilters.source_station) {
-        stationRows = stationRows.filter((row) => row.source_station === apiFilters.source_station);
-      }
-
-      const defectsByStation = groupByStation(stationDefects.items);
-      const hourByStation = groupByStation(stationHour.items);
-      const dayByStation = groupByStation(stationDay.items);
-      const piecesResponses = await Promise.all(
-        stationRows.map((row) =>
-          fetchJson(
-            `/api/v1/pieces${buildQuery(apiFilters, {
-              source_station: row.source_station || "",
-              limit: PAGE_SIZE
-            })}`
-          )
-        )
-      );
-
-      const stationReports = stationRows.map((row, index) => {
-        const key = row.source_station || "";
-        return {
-          source_station: row.source_station,
-          summary: row,
-          defects: defectsByStation[key] || [],
-          hourRows: hourByStation[key] || [],
-          dayRows: dayByStation[key] || [],
-          pieces: piecesResponses[index]?.items || []
-        };
-      });
-
-      setData({
-        summary,
-        defects: defects.items || [],
-        hourRows: hour.items || [],
-        dayRows: day.items || [],
-        stationReports
-      });
+      const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(apiFilters)}`);
+      setData(payload);
     } catch (exc) {
       setError(exc.message);
     } finally {
@@ -394,12 +415,14 @@ function App() {
     window.location.href = `/api/v1/reports/excel${buildQuery(apiFilters)}`;
   }
 
+  const stations = stationList(data);
+
   return (
     <main>
       <header className="topbar">
         <div>
-          <h1>Vision Administration</h1>
-          <p>Representacion local por hora, por dia y por source station</p>
+          <h1>Reject Summary</h1>
+          <p>Analisis por Tesla / lado, condicion y Top 3 historico</p>
         </div>
         <div className="actions">
           <button type="button" onClick={loadData} disabled={loading} title="Actualizar">
@@ -447,29 +470,16 @@ function App() {
       {error ? <div className="error">{error}</div> : null}
       {loading ? <div className="loading">Cargando datos...</div> : null}
 
-      {data ? (
-        <>
-          <section className="global">
-            <div className="station-header">
-              <h2>Global</h2>
-              <span>{data.stationReports.length} estaciones</span>
-            </div>
-            <KpiStrip summary={data.summary} />
-            <div className="grid two">
-              <DataChart title="Por hora" type="bar" rows={data.hourRows} />
-              <DataChart title="Por dia" type="line" rows={data.dayRows} />
-            </div>
-            <div className="grid two">
-              <DefectTopChart rows={data.defects} />
-              <DefectsTable rows={data.defects} />
-            </div>
-          </section>
+      <nav className="tabs" aria-label="Reject summary tabs">
+        {TABS.map((tab) => (
+          <TabButton key={tab.id} tab={tab} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} />
+        ))}
+      </nav>
 
-          {data.stationReports.map((report) => (
-            <StationSection key={report.source_station || "blank"} report={report} />
-          ))}
-        </>
-      ) : null}
+      {data && activeTab === "daily" ? <DailyTab data={data} stations={stations} /> : null}
+      {data && activeTab === "conditions" ? <ConditionsTab data={data} stations={stations} /> : null}
+      {data && activeTab === "top3" ? <Top3Tab data={data} stations={stations} /> : null}
+      {!data && !loading ? <Empty label="Sin datos cargados" /> : null}
     </main>
   );
 }

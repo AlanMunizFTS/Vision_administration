@@ -236,6 +236,28 @@ def station_timeseries(
         handle_report_error(exc)
 
 
+@app.get("/api/v1/reject-summary")
+def reject_summary(
+    start_at: str | None = None,
+    end_at: str | None = None,
+    source_station: str | None = None,
+    source_id: int | None = None,
+    jsn: str | None = None,
+    db=Depends(db_dependency),
+):
+    try:
+        return reports.get_reject_summary(
+            db,
+            start_at=start_at,
+            end_at=end_at,
+            source_station=source_station,
+            source_id=source_id,
+            jsn=jsn,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
 def _collect_excel_data(db, start_at, end_at, source_station, source_id, jsn):
     common = {
         "start_at": start_at,
