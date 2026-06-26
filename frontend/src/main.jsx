@@ -25,6 +25,7 @@ const TABS = [
 ];
 
 const COLORS = ["#2f6f9f", "#c9564a", "#6f8f3f", "#d39b32", "#7259a4", "#3f8f88", "#8a5c3b", "#69717c"];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
@@ -47,9 +48,20 @@ async function fetchJson(path) {
   return response.json();
 }
 
-function toInputDateTime(value) {
-  if (!value) return "";
-  return String(value).replace(" ", "T").slice(0, 16);
+function formatInputDateTime(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function defaultDateRange() {
+  const end = new Date();
+  end.setHours(23, 59, 0, 0);
+  const start = new Date(end.getTime() - 7 * DAY_MS);
+  start.setHours(0, 0, 0, 0);
+  return {
+    start_at: formatInputDateTime(start),
+    end_at: formatInputDateTime(end)
+  };
 }
 
 function toApiDateTime(value) {
@@ -120,6 +132,34 @@ function classNames(rows = []) {
   return [...new Set(rows.map((row) => row.class_name).filter(Boolean))];
 }
 
+function conditionClasses(rows = []) {
+  const totals = {};
+  for (const row of rows) {
+    if (!row.class_name || row.class_name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
+    totals[row.class_name] = (totals[row.class_name] || 0) + Number(row.nok_pieces || 0);
+  }
+  return Object.entries(totals)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name]) => name);
+}
+
+function conditionDailyRows(rows = [], classes = []) {
+  const byDate = {};
+  for (const row of rows) {
+    if (!row.class_name || row.class_name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
+    const day = dateLabel(row.reject_date);
+    if (!byDate[day]) byDate[day] = { reject_date: day, total_nok: 0 };
+    byDate[day][row.class_name] = (byDate[day][row.class_name] || 0) + Number(row.nok_pieces || 0);
+    byDate[day].total_nok += Number(row.nok_pieces || 0);
+  }
+  return Object.values(byDate).sort((a, b) => a.reject_date.localeCompare(b.reject_date)).map((row) => {
+    for (const name of classes) {
+      if (row[name] === undefined) row[name] = 0;
+    }
+    return row;
+  });
+}
+
 function TabButton({ tab, active, onClick }) {
   return (
     <button type="button" className={`tab-button ${active ? "active" : ""}`} onClick={onClick}>
@@ -176,12 +216,17 @@ function DailyTab({ data, stations }) {
               <tr>
                 <th rowSpan="2">Date</th>
                 {stations.map((station) => (
-                  <th key={station || "blank"} colSpan="5">{stationName(station)}</th>
+                  <th className="station-group" key={station || "blank"} colSpan="5">{stationName(station)}</th>
                 ))}
               </tr>
               <tr>
                 {stations.flatMap((station) => ["OK", "NOK", "Total", "% OK", "% NOK"].map((metric) => (
-                  <th key={`${station}-${metric}`}>{metric}</th>
+                  <th
+                    key={`${station}-${metric}`}
+                    className={`${metric === "OK" ? "group-start" : ""} ${metric === "% NOK" ? "group-end" : ""}`}
+                  >
+                    {metric}
+                  </th>
                 )))}
               </tr>
             </thead>
@@ -193,11 +238,11 @@ function DailyTab({ data, stations }) {
                     {stations.flatMap((station) => {
                       const row = (byStation[station] || []).find((item) => dateLabel(item.reject_date) === chartRow.reject_date);
                       return [
-                        <td key={`${station}-ok-${chartRow.reject_date}`}>{numberFormat(row?.ok_pieces)}</td>,
+                        <td className="group-start" key={`${station}-ok-${chartRow.reject_date}`}>{numberFormat(row?.ok_pieces)}</td>,
                         <td key={`${station}-nok-${chartRow.reject_date}`}>{numberFormat(row?.nok_pieces)}</td>,
                         <td key={`${station}-total-${chartRow.reject_date}`}>{numberFormat(row?.total_pieces)}</td>,
                         <td key={`${station}-pct-ok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_ok) : ""}</td>,
-                        <td key={`${station}-pct-nok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_nok) : ""}</td>
+                        <td className="group-end" key={`${station}-pct-nok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_nok) : ""}</td>
                       ];
                     })}
                   </tr>
@@ -220,14 +265,13 @@ function ConditionsTab({ data, stations }) {
   const totalsByStation = groupBy(data?.condition_totals || [], "source_station");
 
   return (
-    <section className="station-grid">
-      {stations.length ? stations.map((station) => {
-        const totals = totalsByStation[station] || [];
-        const periods = periodsByStation[station] || [];
-        return (
-          <section className="panel station-card" key={station || "blank"}>
-            <div className="panel-title">{stationName(station)}</div>
-            <div className="condition-layout">
+    <section className="tab-panel">
+      <section className="station-grid">
+        {stations.length ? stations.map((station) => {
+          const totals = totalsByStation[station] || [];
+          return (
+            <section className="panel station-card" key={station || "blank"}>
+              <div className="panel-title">{stationName(station)} - Rechazos por clase</div>
               <div className="chart-wrap pie">
                 {totals.length ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -245,42 +289,51 @@ function ConditionsTab({ data, stations }) {
                   <Empty label="Sin rechazos" />
                 )}
               </div>
-              <div className="table-wrap condition">
+            </section>
+          );
+        }) : <Empty />}
+      </section>
+
+      <section className="daily-defects">
+        {stations.length ? stations.map((station) => {
+          const periods = periodsByStation[station] || [];
+          const classes = conditionClasses(periods);
+          const rows = conditionDailyRows(periods, classes);
+          return (
+            <section className="panel station-card" key={`${station || "blank"}-daily`}>
+              <div className="panel-title">{stationName(station)} - Defectos dia a dia</div>
+              <div className="table-wrap condition-daily">
                 <table>
                   <thead>
                     <tr>
                       <th>Fecha</th>
-                      <th>Periodo inicio</th>
-                      <th>Periodo fin</th>
-                      <th>Class Name</th>
-                      <th>OK</th>
-                      <th>NOK</th>
-                      <th>Total</th>
+                      {classes.map((name) => (
+                        <th key={`${station}-${name}`}>{name}</th>
+                      ))}
+                      <th>Total NOK</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {periods.length ? periods.map((row, index) => (
-                      <tr key={`${station}-${row.reject_date}-${row.class_name}-${index}`}>
+                    {rows.length ? rows.map((row) => (
+                      <tr key={`${station}-${row.reject_date}`}>
                         <td>{dateLabel(row.reject_date)}</td>
-                        <td>{String(row.period_start || "").slice(0, 19)}</td>
-                        <td>{String(row.period_end || "").slice(0, 19)}</td>
-                        <td>{row.class_name}</td>
-                        <td>{numberFormat(row.ok_pieces)}</td>
-                        <td>{numberFormat(row.nok_pieces)}</td>
-                        <td>{numberFormat(row.total_pieces)}</td>
+                        {classes.map((name) => (
+                          <td key={`${station}-${row.reject_date}-${name}`}>{numberFormat(row[name])}</td>
+                        ))}
+                        <td>{numberFormat(row.total_nok)}</td>
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan="7" className="empty-cell">Sin datos</td>
+                        <td colSpan={2 + classes.length} className="empty-cell">Sin defectos</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-            </div>
-          </section>
-        );
-      }) : <Empty />}
+            </section>
+          );
+        }) : null}
+      </section>
     </section>
   );
 }
@@ -352,13 +405,11 @@ function Top3Tab({ data, stations }) {
 
 function App() {
   const [options, setOptions] = useState({ source_stations: [] });
-  const [filters, setFilters] = useState({
-    start_at: "",
-    end_at: "",
+  const [filters, setFilters] = useState(() => ({
+    ...defaultDateRange(),
     source_station: "",
-    source_id: "",
     jsn: ""
-  });
+  }));
   const [activeTab, setActiveTab] = useState("daily");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -368,11 +419,6 @@ function App() {
     fetchJson("/api/v1/options")
       .then((payload) => {
         setOptions(payload);
-        setFilters((current) => ({
-          ...current,
-          start_at: toInputDateTime(payload.min_captured_at),
-          end_at: toInputDateTime(payload.max_captured_at)
-        }));
       })
       .catch((exc) => setError(exc.message));
   }, []);
@@ -382,7 +428,6 @@ function App() {
       start_at: toApiDateTime(filters.start_at),
       end_at: toApiDateTime(filters.end_at),
       source_station: filters.source_station,
-      source_id: filters.source_id,
       jsn: filters.jsn.trim()
     }),
     [filters]
@@ -436,7 +481,7 @@ function App() {
         </div>
       </header>
 
-      <section className="filters">
+      <section className="filters compact">
         <label>
           Inicio
           <input type="datetime-local" value={filters.start_at} onChange={(event) => updateFilter("start_at", event.target.value)} />
@@ -453,10 +498,6 @@ function App() {
               <option key={station} value={station}>{stationName(station)}</option>
             ))}
           </select>
-        </label>
-        <label>
-          Source id
-          <input value={filters.source_id} onChange={(event) => updateFilter("source_id", event.target.value)} inputMode="numeric" />
         </label>
         <label className="search-label">
           JSN

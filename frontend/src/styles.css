@@ -80,6 +80,10 @@ button:disabled {
   border-radius: 8px;
 }
 
+.filters.compact {
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -200,10 +204,9 @@ select {
   height: 330px;
 }
 
-.condition-layout {
+.daily-defects {
   display: grid;
-  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 0.58fr);
-  gap: 0;
+  gap: 12px;
 }
 
 .empty,
@@ -230,6 +233,10 @@ select {
 
 .table-wrap.condition {
   max-height: 310px;
+}
+
+.table-wrap.condition-daily {
+  max-height: 420px;
 }
 
 table {
@@ -264,8 +271,26 @@ th {
   text-align: center;
 }
 
+.matrix-table .station-group {
+  border-left: 2px solid #9aa8b6;
+  border-right: 2px solid #9aa8b6;
+}
+
 .matrix-table thead tr:nth-child(2) th {
   top: 36px;
+}
+
+.matrix-table .group-start {
+  border-left: 2px solid #9aa8b6;
+}
+
+.matrix-table .group-end {
+  border-right: 2px solid #9aa8b6;
+}
+
+.matrix-table tbody td.group-start,
+.matrix-table tbody td.group-end {
+  background-clip: padding-box;
 }
 
 tbody tr:nth-child(even) {
@@ -283,8 +308,8 @@ tbody tr:nth-child(even) {
   }
 
   .filters,
-  .station-grid,
-  .condition-layout {
+  .filters.compact,
+  .station-grid {
     grid-template-columns: 1fr;
   }
 }
