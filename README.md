@@ -102,3 +102,21 @@ response = requests.get("http://127.0.0.1:8000/api/v1/summary", timeout=10)
 response.raise_for_status()
 print(response.json())
 ```
+
+## Reporte Excel
+
+Con la API levantada, genera un reporte agregado de los ultimos 30 dias:
+
+```powershell
+.\venv\Scripts\python.exe scripts\generate_excel_report.py
+```
+
+El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`.
+
+Parametros utiles:
+
+```powershell
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --days 30
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-05-27T00:00:00" --end-at "2026-06-26T23:59:59"
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a --source-id 2
+```
