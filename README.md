@@ -28,6 +28,18 @@ En Docker, la API queda viva mientras el compose siga corriendo. Para detenerla,
 docker compose down
 ```
 
+Para ver los logs del contenedor:
+
+```powershell
+docker compose logs vision-api
+```
+
+Para seguirlos en vivo:
+
+```powershell
+docker compose logs -f vision-api
+```
+
 Nota: dentro de Docker, `127.0.0.1` apunta al contenedor, no a tu PC. Por eso `docker-compose.yml` usa `host.docker.internal` como `DB_HOST` por defecto. Si PostgreSQL esta en otro equipo, agrega en `.env`:
 
 ```text

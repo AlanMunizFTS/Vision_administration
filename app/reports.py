@@ -7,9 +7,13 @@ RESULTS_TABLE = "public.model_results_central"
 
 CAPTURED_AT_EXPR = """
 CASE
-    WHEN jsn ~ '^.{5}[0-9]{12}'
-     AND to_char(to_timestamp(substring(jsn from 6 for 12), 'MMDDYYHH24MISS'), 'MMDDYYHH24MISS') = substring(jsn from 6 for 12)
-    THEN to_timestamp(substring(jsn from 6 for 12), 'MMDDYYHH24MISS')::timestamp
+    WHEN substring(jsn from 6 for 12) ~ '^(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])[0-9]{2}([01][0-9]|2[0-3])[0-5][0-9][0-5][0-9]$'
+    THEN
+        CASE
+            WHEN to_char(to_timestamp(substring(jsn from 6 for 12), 'MMDDYYHH24MISS'), 'MMDDYYHH24MISS') = substring(jsn from 6 for 12)
+            THEN to_timestamp(substring(jsn from 6 for 12), 'MMDDYYHH24MISS')::timestamp
+            ELSE NULL
+        END
     ELSE NULL
 END
 """
