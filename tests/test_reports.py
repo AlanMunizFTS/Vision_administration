@@ -124,6 +124,8 @@ class ReportsTests(unittest.TestCase):
         top3_query = db.calls[0][0]
         self.assertIn("date_trunc('day', captured_at)::date", daily_query)
         self.assertIn("GROUP BY source_station, date_trunc('day', captured_at)::date", daily_query)
+        self.assertIn("main_confidence", top3_query)
+        self.assertIn("created_at_last", top3_query)
         self.assertIn("day_bounds", condition_query)
         self.assertIn("CASE WHEN model_result = 'OK' THEN 'OK' ELSE condition_name END", condition_query)
         self.assertIn("ROW_NUMBER() OVER", top3_query)

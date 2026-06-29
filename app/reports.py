@@ -509,6 +509,8 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
             jsn,
             model_result,
             captured_at,
+            created_at_last,
+            main_confidence,
             {defect_name_expr("main_defect")} AS condition_name
         FROM pieces
         {where_sql}
