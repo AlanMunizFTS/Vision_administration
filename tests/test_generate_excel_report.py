@@ -195,6 +195,15 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(top3["C6"].value, "SCRATCH")
         self.assertEqual(top3._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(top3._charts[0].y_axis.scaling.max, 1)
+        condition_colors = [
+            point.spPr.solidFill.srgbClr
+            for point in conditions._charts[0].series[0].data_points
+        ]
+        top3_colors = [
+            series.graphicalProperties.solidFill.srgbClr
+            for series in top3._charts[0].series
+        ]
+        self.assertEqual(condition_colors, top3_colors)
 
     def test_generate_report_writes_xlsx_file(self):
         session = FakeSession()

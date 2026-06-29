@@ -94,6 +94,28 @@ function compareDefects(a, b) {
   return defectName(a).localeCompare(defectName(b), "es", { sensitivity: "base" });
 }
 
+function reportDefectNames(data) {
+  const names = new Set();
+  for (const collection of ["condition_totals", "condition_periods", "top3_history"]) {
+    for (const row of data?.[collection] || []) {
+      const name = defectName(row.class_name);
+      if (name !== "OK") names.add(name);
+    }
+  }
+  return [...names].sort(compareDefects);
+}
+
+function defectColorMap(data) {
+  return reportDefectNames(data).reduce((acc, name, index) => {
+    acc[name] = COLORS[index % COLORS.length];
+    return acc;
+  }, {});
+}
+
+function defectColor(colorsByDefect, name) {
+  return colorsByDefect[defectName(name)] || COLORS[0];
+}
+
 function niceAxisMax(values = []) {
   const maxValue = Math.max(0, ...values.map((value) => Number(value || 0)));
   if (maxValue <= 0) return 1;
@@ -292,7 +314,7 @@ function DailyTab({ data, stations }) {
   );
 }
 
-function ConditionsTab({ data, stations }) {
+function ConditionsTab({ data, stations, colorsByDefect }) {
   const periodsByStation = groupBy(data?.condition_periods || [], "source_station");
   const totalsByStation = groupBy(data?.condition_totals || [], "source_station");
 
@@ -310,7 +332,7 @@ function ConditionsTab({ data, stations }) {
                     <PieChart>
                       <Pie data={totals} dataKey="nok_pieces" nameKey="class_name" outerRadius={92} label>
                         {totals.map((_, index) => (
-                          <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                          <Cell key={index} fill={defectColor(colorsByDefect, totals[index].class_name)} />
                         ))}
                       </Pie>
                       <Tooltip formatter={(value) => numberFormat(value)} />
@@ -370,7 +392,7 @@ function ConditionsTab({ data, stations }) {
   );
 }
 
-function Top3Tab({ data, stations }) {
+function Top3Tab({ data, stations, colorsByDefect }) {
   const historyByStation = groupBy(data?.top3_history || [], "source_station");
   const countAxisMax = niceAxisMax((data?.top3_history || []).map((row) => row.nok_pieces));
 
@@ -400,8 +422,8 @@ function Top3Tab({ data, stations }) {
                     <YAxis domain={[0, countAxisMax]} tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(value) => numberFormat(value)} />
                     <Legend />
-                    {classes.map((name, index) => (
-                      <Bar key={name} dataKey={name} name={name} fill={COLORS[index % COLORS.length]} />
+                    {classes.map((name) => (
+                      <Bar key={name} dataKey={name} name={name} fill={defectColor(colorsByDefect, name)} />
                     ))}
                   </BarChart>
                 </ResponsiveContainer>
@@ -502,6 +524,7 @@ function App() {
   }
 
   const stations = stationList(data);
+  const colorsByDefect = useMemo(() => defectColorMap(data), [data]);
 
   return (
     <main>
@@ -559,8 +582,8 @@ function App() {
       </nav>
 
       {data && activeTab === "daily" ? <DailyTab data={data} stations={stations} /> : null}
-      {data && activeTab === "conditions" ? <ConditionsTab data={data} stations={stations} /> : null}
-      {data && activeTab === "top3" ? <Top3Tab data={data} stations={stations} /> : null}
+      {data && activeTab === "conditions" ? <ConditionsTab data={data} stations={stations} colorsByDefect={colorsByDefect} /> : null}
+      {data && activeTab === "top3" ? <Top3Tab data={data} stations={stations} colorsByDefect={colorsByDefect} /> : null}
       {!data && !loading ? <Empty label="Sin datos cargados" /> : null}
     </main>
   );

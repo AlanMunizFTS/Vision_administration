@@ -7,6 +7,8 @@ from pathlib import Path
 import requests
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -16,6 +18,7 @@ DEFAULT_API_URL = "http://127.0.0.1:8000"
 DEFAULT_DAYS = 7
 DEFAULT_OUTPUT_DIR = "reports"
 REQUEST_TIMEOUT_SECONDS = 20
+COLORS = ("2f6f9f", "c9564a", "6f8f3f", "d39b32", "7259a4", "3f8f88", "8a5c3b", "69717c")
 
 
 class ReportError(RuntimeError):
@@ -119,6 +122,24 @@ def _station_name(value):
 def _defect_name(value):
     text = str(value or "").strip().upper()
     return text or "UNCLASSIFIED"
+
+
+def _report_defect_names(data):
+    names = set()
+    for collection in ("condition_totals", "condition_periods", "top3_history"):
+        for row in data.get(collection) or []:
+            name = _defect_name(row.get("class_name"))
+            if name != "OK":
+                names.add(name)
+    return sorted(names)
+
+
+def _defect_color_map(data):
+    return {name: COLORS[idx % len(COLORS)] for idx, name in enumerate(_report_defect_names(data))}
+
+
+def _defect_color(colors_by_defect, name):
+    return colors_by_defect.get(_defect_name(name), COLORS[0])
 
 
 def _nice_axis_max(values):
@@ -339,7 +360,7 @@ def _write_daily_sheet(workbook, data):
     return sheet
 
 
-def _write_conditions_sheet(workbook, data):
+def _write_conditions_sheet(workbook, data, colors_by_defect):
     sheet = workbook.create_sheet("Per Condition")
     stations = _station_list(data)
     totals_by_station = _group_by(data.get("condition_totals") or [], "source_station")
@@ -382,6 +403,10 @@ def _write_conditions_sheet(workbook, data):
             chart.width = 12
             chart.add_data(Reference(sheet, min_col=3, min_row=total_header, max_row=total_max_row), titles_from_data=True)
             chart.set_categories(Reference(sheet, min_col=2, min_row=total_header + 1, max_row=total_max_row))
+            chart.series[0].data_points = [
+                DataPoint(idx=idx, spPr=GraphicalProperties(solidFill=_defect_color(colors_by_defect, row[1])))
+                for idx, row in enumerate(total_rows)
+            ]
             sheet.add_chart(chart, "E" + str(total_header))
 
         row_cursor = total_max_row + 3
@@ -407,7 +432,7 @@ def _write_conditions_sheet(workbook, data):
     return sheet
 
 
-def _write_top3_sheet(workbook, data):
+def _write_top3_sheet(workbook, data, colors_by_defect):
     sheet = workbook.create_sheet("Top 3 Historico")
     stations = _station_list(data)
     history_by_station = _group_by(data.get("top3_history") or [], "source_station")
@@ -479,6 +504,8 @@ def _write_top3_sheet(workbook, data):
                 Reference(sheet, min_col=2, max_col=history_max_col, min_row=history_header, max_row=history_max_row),
                 titles_from_data=True,
             )
+            for idx, class_name in enumerate(classes):
+                chart.series[idx].graphicalProperties.solidFill = _defect_color(colors_by_defect, class_name)
             chart.set_categories(Reference(sheet, min_col=1, min_row=history_header + 1, max_row=history_max_row))
             sheet.add_chart(chart, "E" + str(history_header))
 
@@ -491,9 +518,11 @@ def _write_top3_sheet(workbook, data):
 
 def build_workbook(report_params, data):
     workbook = Workbook()
-    _write_daily_sheet(workbook, data or {})
-    _write_conditions_sheet(workbook, data or {})
-    _write_top3_sheet(workbook, data or {})
+    data = data or {}
+    colors_by_defect = _defect_color_map(data)
+    _write_daily_sheet(workbook, data)
+    _write_conditions_sheet(workbook, data, colors_by_defect)
+    _write_top3_sheet(workbook, data, colors_by_defect)
     return workbook
 
 
