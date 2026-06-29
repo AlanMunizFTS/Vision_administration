@@ -52,7 +52,6 @@ def build_base_filters(
     end_at=None,
     source_station=None,
     source_id=None,
-    jsn=None,
     class_name=None,
     min_confidence=None,
 ):
@@ -74,9 +73,6 @@ def build_base_filters(
     if source_id is not None:
         filters.append("source_id = %s")
         params.append(source_id)
-    if jsn:
-        filters.append("jsn = %s")
-        params.append(jsn)
     if class_name:
         filters.append("class_name = %s")
         params.append(class_name)
@@ -90,7 +86,7 @@ def build_base_filters(
     return where_sql, params
 
 
-def build_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None, jsn=None):
+def build_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None):
     filters = []
     params = []
 
@@ -109,9 +105,6 @@ def build_piece_filters(start_at=None, end_at=None, source_station=None, source_
     if source_id is not None:
         filters.append("%s = ANY(source_ids)")
         params.append(source_id)
-    if jsn:
-        filters.append("jsn = %s")
-        params.append(jsn)
 
     where_sql = ""
     if filters:
@@ -198,7 +191,6 @@ def get_results(
     end_at=None,
     source_station=None,
     source_id=None,
-    jsn=None,
     class_name=None,
     min_confidence=None,
     limit=100,
@@ -209,7 +201,6 @@ def get_results(
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
         class_name=class_name,
         min_confidence=min_confidence,
     )
@@ -239,7 +230,6 @@ def get_pieces(
     end_at=None,
     source_station=None,
     source_id=None,
-    jsn=None,
     limit=100,
     offset=0,
 ):
@@ -248,7 +238,6 @@ def get_pieces(
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -262,13 +251,12 @@ def get_pieces(
     return {"items": [normalize_row(row) for row in rows], "limit": limit, "offset": offset}
 
 
-def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=None, jsn=None):
+def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -284,12 +272,11 @@ def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=N
     return normalize_row(db.fetch_one(query, params) or {})
 
 
-def get_station_summary(db, start_at=None, end_at=None, source_id=None, jsn=None):
+def get_station_summary(db, start_at=None, end_at=None, source_id=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -308,13 +295,12 @@ def get_station_summary(db, start_at=None, end_at=None, source_id=None, jsn=None
     return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
 
 
-def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=None, jsn=None):
+def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -332,12 +318,11 @@ def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=N
     return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
 
 
-def get_station_defects(db, start_at=None, end_at=None, source_id=None, jsn=None):
+def get_station_defects(db, start_at=None, end_at=None, source_id=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -362,7 +347,6 @@ def get_timeseries(
     end_at=None,
     source_station=None,
     source_id=None,
-    jsn=None,
     bucket="hour",
 ):
     if bucket not in {"hour", "day"}:
@@ -373,7 +357,6 @@ def get_timeseries(
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -397,7 +380,6 @@ def get_station_timeseries(
     start_at=None,
     end_at=None,
     source_id=None,
-    jsn=None,
     bucket="hour",
 ):
     if bucket not in {"hour", "day"}:
@@ -407,7 +389,6 @@ def get_station_timeseries(
         start_at=start_at,
         end_at=end_at,
         source_id=source_id,
-        jsn=jsn,
     )
     query = f"""
     {piece_cte()}
@@ -427,13 +408,12 @@ def get_station_timeseries(
     return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
 
 
-def get_reject_summary(db, start_at=None, end_at=None, source_station=None, source_id=None, jsn=None):
+def get_reject_summary(db, start_at=None, end_at=None, source_station=None, source_id=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
-        jsn=jsn,
     )
     filtered_sql = f"""
     {piece_cte()},

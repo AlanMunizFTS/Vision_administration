@@ -61,6 +61,13 @@ class ReportsTests(unittest.TestCase):
         self.assertIn("GROUP BY source_station, date_trunc", query)
         self.assertEqual(params, ["day", "day"])
 
+    def test_filter_builders_do_not_create_jsn_filter_predicates(self):
+        base_where, _ = reports.build_base_filters(source_station="station-a", source_id=2)
+        piece_where, _ = reports.build_piece_filters(source_station="station-a", source_id=2)
+
+        self.assertNotIn("jsn = %s", base_where)
+        self.assertNotIn("jsn = %s", piece_where)
+
     def test_reject_summary_returns_excel_shaped_collections(self):
         db = SequencedDb(
             [

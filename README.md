@@ -30,7 +30,7 @@ API:       http://127.0.0.1:8000
 Docs API:  http://127.0.0.1:8000/docs
 ```
 
-La pagina divide los reportes por `source_station`, muestra resumen global, graficas por hora/dia, top 3 defectos y tabla de piezas por JSN.
+La pagina divide los reportes por `source_station`, muestra resumen global, graficas por dia, defectos por condicion y top 3 historico.
 
 Los servicios quedan vivos mientras el compose siga corriendo. Para detenerlos, usa `Ctrl+C`; si los levantaste en segundo plano con `-d`, usa:
 
@@ -99,6 +99,7 @@ http://127.0.0.1:8000/docs
 - `GET /api/v1/stations/timeseries?bucket=hour`
 - `GET /api/v1/reject-summary`
 - `GET /api/v1/reports/excel`
+- `POST /api/v1/reports/excel`
 
 ## Reglas
 
@@ -137,7 +138,7 @@ Parametros utiles:
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a
 ```
 
-Desde el frontend, la descarga de Excel usa solo los filtros de fecha y `source_station`. El filtro `JSN` afecta la vista de la pagina, pero no la exportacion.
+Desde el frontend, la descarga de Excel usa los datos ya cargados en el dashboard para generar el archivo mas rapido y replicar lo visible. Los filtros disponibles para el reporte son fecha y `source_station`; `JSN` ya no esta disponible como filtro.
 
 Si estas usando Docker, reconstruye el contenedor y ejecuta el script dentro de `vision-api`:
 

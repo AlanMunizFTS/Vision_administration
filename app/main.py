@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app import reports
@@ -56,7 +56,6 @@ def results(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     class_name: str | None = None,
     min_confidence: float | None = None,
     limit: int = Query(100, ge=1, le=5000),
@@ -70,7 +69,6 @@ def results(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
             class_name=class_name,
             min_confidence=min_confidence,
             limit=limit,
@@ -86,7 +84,6 @@ def pieces(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     limit: int = Query(100, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     db=Depends(db_dependency),
@@ -98,7 +95,6 @@ def pieces(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
             limit=limit,
             offset=offset,
         )
@@ -112,7 +108,6 @@ def summary(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -122,7 +117,6 @@ def summary(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -134,7 +128,6 @@ def defects(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -144,7 +137,6 @@ def defects(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -156,7 +148,6 @@ def timeseries(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     bucket: str = Query("hour", pattern="^(hour|day)$"),
     db=Depends(db_dependency),
 ):
@@ -167,7 +158,6 @@ def timeseries(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
             bucket=bucket,
         )
     except ValueError as exc:
@@ -179,7 +169,6 @@ def station_summary(
     start_at: str | None = None,
     end_at: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -188,7 +177,6 @@ def station_summary(
             start_at=start_at,
             end_at=end_at,
             source_id=source_id,
-            jsn=jsn,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -199,7 +187,6 @@ def station_defects(
     start_at: str | None = None,
     end_at: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -208,7 +195,6 @@ def station_defects(
             start_at=start_at,
             end_at=end_at,
             source_id=source_id,
-            jsn=jsn,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -219,7 +205,6 @@ def station_timeseries(
     start_at: str | None = None,
     end_at: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     bucket: str = Query("hour", pattern="^(hour|day)$"),
     db=Depends(db_dependency),
 ):
@@ -229,7 +214,6 @@ def station_timeseries(
             start_at=start_at,
             end_at=end_at,
             source_id=source_id,
-            jsn=jsn,
             bucket=bucket,
         )
     except ValueError as exc:
@@ -242,7 +226,6 @@ def reject_summary(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -252,7 +235,6 @@ def reject_summary(
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            jsn=jsn,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -271,13 +253,23 @@ def _excel_period(start_at, end_at):
     )
 
 
+def _workbook_response(workbook):
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="vision_report.xlsx"'},
+    )
+
+
 @app.get("/api/v1/reports/excel")
 def excel_report(
     start_at: str | None = None,
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    jsn: str | None = None,
     db=Depends(db_dependency),
 ):
     try:
@@ -298,11 +290,21 @@ def excel_report(
     except ValueError as exc:
         handle_report_error(exc)
 
-    stream = BytesIO()
-    workbook.save(stream)
-    stream.seek(0)
-    return StreamingResponse(
-        stream,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="vision_report.xlsx"'},
+    return _workbook_response(workbook)
+
+
+@app.post("/api/v1/reports/excel")
+def excel_report_from_summary(payload: dict = Body(...)):
+    filters = payload.get("filters") or {}
+    data = payload.get("data")
+    if not isinstance(filters, dict) or not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Body must include filters and data objects")
+
+    report_params = ReportParams(
+        api_url="frontend",
+        start_at=str(filters.get("start_at") or ""),
+        end_at=str(filters.get("end_at") or ""),
+        source_station=filters.get("source_station") or None,
     )
+    workbook = build_workbook(report_params, data)
+    return _workbook_response(workbook)

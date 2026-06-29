@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from inspect import signature
 from unittest.mock import patch
 
 from app import main
@@ -23,7 +24,6 @@ class ExcelEndpointTests(unittest.TestCase):
                 end_at="2026-06-26 23:59:59",
                 source_station="station-a",
                 source_id=2,
-                jsn="JSN001",
                 db=fake_db,
             )
 
@@ -34,6 +34,25 @@ class ExcelEndpointTests(unittest.TestCase):
             end_at="2026-06-26 23:59:59",
             source_station="station-a",
         )
+
+    def test_excel_report_does_not_declare_deprecated_jsn_query_param(self):
+        self.assertNotIn("jsn", signature(main.excel_report).parameters)
+
+    def test_excel_report_from_summary_uses_payload_without_db_query(self):
+        with patch.object(main.reports, "get_reject_summary") as get_reject_summary:
+            response = main.excel_report_from_summary(
+                {
+                    "filters": {
+                        "start_at": "2026-06-19 00:00:00",
+                        "end_at": "2026-06-26 23:59:59",
+                        "source_station": "station-a",
+                    },
+                    "data": EMPTY_REJECT_SUMMARY,
+                }
+            )
+
+        self.assertEqual(response.media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        get_reject_summary.assert_not_called()
 
     def test_excel_report_uses_default_period_when_dates_are_missing(self):
         fake_db = object()

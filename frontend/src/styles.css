@@ -81,7 +81,7 @@ button:disabled {
 }
 
 .filters.compact {
-  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
 }
 
 label {
@@ -103,22 +103,6 @@ select {
   background: #ffffff;
   color: #22262a;
   font: inherit;
-}
-
-.search-label span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #b9c2cc;
-  border-radius: 5px;
-  padding: 0 8px;
-  background: #ffffff;
-}
-
-.search-label input {
-  border: 0;
-  padding-left: 0;
-  outline: 0;
 }
 
 .error,

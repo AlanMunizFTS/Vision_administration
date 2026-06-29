@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Download, RefreshCw, Search } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -37,6 +37,10 @@ function buildQuery(filters, extra = {}) {
   }
   const text = params.toString();
   return text ? `?${text}` : "";
+}
+
+function sameFilters(left, right) {
+  return ["start_at", "end_at", "source_station"].every((key) => (left?.[key] || "") === (right?.[key] || ""));
 }
 
 async function fetchJson(path) {
@@ -466,12 +470,13 @@ function App() {
   const [options, setOptions] = useState({ source_stations: [] });
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
-    source_station: "",
-    jsn: ""
+    source_station: ""
   }));
   const [activeTab, setActiveTab] = useState("daily");
   const [data, setData] = useState(null);
+  const [loadedFilters, setLoadedFilters] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -486,8 +491,7 @@ function App() {
     () => ({
       start_at: toApiDateTime(filters.start_at),
       end_at: toApiDateTime(filters.end_at),
-      source_station: filters.source_station,
-      jsn: filters.jsn.trim()
+      source_station: filters.source_station
     }),
     [filters]
   );
@@ -498,6 +502,7 @@ function App() {
     try {
       const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(apiFilters)}`);
       setData(payload);
+      setLoadedFilters(apiFilters);
     } catch (exc) {
       setError(exc.message);
     } finally {
@@ -515,16 +520,39 @@ function App() {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
-  function downloadExcel() {
-    window.location.href = `/api/v1/reports/excel${buildQuery({
-      start_at: apiFilters.start_at,
-      end_at: apiFilters.end_at,
-      source_station: apiFilters.source_station
-    })}`;
+  async function downloadExcel() {
+    if (!data || !loadedFilters || !sameFilters(apiFilters, loadedFilters)) return;
+    setExporting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/v1/reports/excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters: loadedFilters, data })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Request failed: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "vision_report.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setExporting(false);
+    }
   }
 
   const stations = stationList(data);
   const colorsByDefect = useMemo(() => defectColorMap(data), [data]);
+  const canDownloadExcel = Boolean(data) && !loading && !exporting && sameFilters(apiFilters, loadedFilters);
 
   return (
     <main>
@@ -538,9 +566,9 @@ function App() {
             <RefreshCw size={17} />
             Actualizar
           </button>
-          <button type="button" onClick={downloadExcel} title="Descargar Excel">
+          <button type="button" onClick={downloadExcel} disabled={!canDownloadExcel} title="Descargar Excel">
             <Download size={17} />
-            Excel
+            {exporting ? "Exportando" : "Excel"}
           </button>
         </div>
       </header>
@@ -562,13 +590,6 @@ function App() {
               <option key={station} value={station}>{stationName(station)}</option>
             ))}
           </select>
-        </label>
-        <label className="search-label">
-          JSN
-          <span>
-            <Search size={16} />
-            <input value={filters.jsn} onChange={(event) => updateFilter("jsn", event.target.value)} />
-          </span>
         </label>
       </section>
 
