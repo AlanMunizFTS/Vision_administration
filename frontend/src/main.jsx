@@ -85,6 +85,24 @@ function stationName(value) {
   return value || "Sin estacion";
 }
 
+function defectName(value) {
+  const text = String(value || "").trim().toUpperCase();
+  return text || "UNCLASSIFIED";
+}
+
+function compareDefects(a, b) {
+  return defectName(a).localeCompare(defectName(b), "es", { sensitivity: "base" });
+}
+
+function niceAxisMax(values = []) {
+  const maxValue = Math.max(0, ...values.map((value) => Number(value || 0)));
+  if (maxValue <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(maxValue));
+  const normalized = maxValue / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceNormalized * magnitude;
+}
+
 function groupBy(items = [], key) {
   return items.reduce((acc, item) => {
     const groupKey = item[key] || "";
@@ -123,33 +141,35 @@ function topHistoryRows(rows = []) {
   for (const row of rows) {
     const day = dateLabel(row.reject_date);
     if (!byDate[day]) byDate[day] = { reject_date: day };
-    byDate[day][row.class_name] = Number(row.nok_pieces || 0);
+    byDate[day][defectName(row.class_name)] = Number(row.nok_pieces || 0);
   }
   return Object.values(byDate).sort((a, b) => a.reject_date.localeCompare(b.reject_date));
 }
 
 function classNames(rows = []) {
-  return [...new Set(rows.map((row) => row.class_name).filter(Boolean))];
+  return [...new Set(rows.map((row) => defectName(row.class_name)).filter(Boolean))].sort(compareDefects);
 }
 
 function conditionClasses(rows = []) {
   const totals = {};
   for (const row of rows) {
-    if (!row.class_name || row.class_name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
-    totals[row.class_name] = (totals[row.class_name] || 0) + Number(row.nok_pieces || 0);
+    const name = defectName(row.class_name);
+    if (name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
+    totals[name] = (totals[name] || 0) + Number(row.nok_pieces || 0);
   }
   return Object.entries(totals)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .sort((a, b) => compareDefects(a[0], b[0]))
     .map(([name]) => name);
 }
 
 function conditionDailyRows(rows = [], classes = []) {
   const byDate = {};
   for (const row of rows) {
-    if (!row.class_name || row.class_name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
+    const name = defectName(row.class_name);
+    if (name === "OK" || Number(row.nok_pieces || 0) <= 0) continue;
     const day = dateLabel(row.reject_date);
     if (!byDate[day]) byDate[day] = { reject_date: day, total_nok: 0 };
-    byDate[day][row.class_name] = (byDate[day][row.class_name] || 0) + Number(row.nok_pieces || 0);
+    byDate[day][name] = (byDate[day][name] || 0) + Number(row.nok_pieces || 0);
     byDate[day].total_nok += Number(row.nok_pieces || 0);
   }
   return Object.values(byDate).sort((a, b) => a.reject_date.localeCompare(b.reject_date)).map((row) => {
@@ -158,6 +178,18 @@ function conditionDailyRows(rows = [], classes = []) {
     }
     return row;
   });
+}
+
+function conditionTotals(rows = []) {
+  const totals = {};
+  for (const row of rows) {
+    const name = defectName(row.class_name);
+    if (name === "OK") continue;
+    totals[name] = (totals[name] || 0) + Number(row.nok_pieces || 0);
+  }
+  return Object.entries(totals)
+    .sort((a, b) => compareDefects(a[0], b[0]))
+    .map(([class_name, nok_pieces]) => ({ class_name, nok_pieces }));
 }
 
 function TabButton({ tab, active, onClick }) {
@@ -186,7 +218,7 @@ function DailyTab({ data, stations }) {
               <LineChart data={rows} margin={{ top: 14, right: 24, bottom: 8, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
                 <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
                 <Tooltip formatter={(value) => (value === null ? "" : `${Number(value).toFixed(1)}%`)} />
                 <Legend />
                 {stations.map((station, index) => (
@@ -268,7 +300,7 @@ function ConditionsTab({ data, stations }) {
     <section className="tab-panel">
       <section className="station-grid">
         {stations.length ? stations.map((station) => {
-          const totals = totalsByStation[station] || [];
+          const totals = conditionTotals(totalsByStation[station] || []);
           return (
             <section className="panel station-card" key={station || "blank"}>
               <div className="panel-title">{stationName(station)} - Rechazos por clase</div>
@@ -340,6 +372,7 @@ function ConditionsTab({ data, stations }) {
 
 function Top3Tab({ data, stations }) {
   const historyByStation = groupBy(data?.top3_history || [], "source_station");
+  const countAxisMax = niceAxisMax((data?.top3_history || []).map((row) => row.nok_pieces));
 
   return (
     <section className="station-grid">
@@ -348,8 +381,12 @@ function Top3Tab({ data, stations }) {
         const classes = classNames(history);
         const rows = topHistoryRows(history);
         const totals = classes.map((name) => {
-          const first = history.find((row) => row.class_name === name);
-          return { class_name: name, total_nok_pieces: Number(first?.total_nok_pieces || 0) };
+          const first = history.find((row) => defectName(row.class_name) === name);
+          return {
+            class_name: name,
+            class_rank: Number(first?.class_rank || 0),
+            total_nok_pieces: Number(first?.total_nok_pieces || 0)
+          };
         });
         return (
           <section className="panel station-card" key={station || "blank"}>
@@ -360,7 +397,7 @@ function Top3Tab({ data, stations }) {
                   <BarChart data={rows} margin={{ top: 14, right: 20, bottom: 8, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
                     <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
-                    <YAxis tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, countAxisMax]} tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(value) => numberFormat(value)} />
                     <Legend />
                     {classes.map((name, index) => (
@@ -384,7 +421,7 @@ function Top3Tab({ data, stations }) {
                 <tbody>
                   {totals.length ? totals.map((row, index) => (
                     <tr key={`${station}-${row.class_name}`}>
-                      <td>{index + 1}</td>
+                      <td>{row.class_rank || index + 1}</td>
                       <td>{row.class_name}</td>
                       <td>{numberFormat(row.total_nok_pieces)}</td>
                     </tr>

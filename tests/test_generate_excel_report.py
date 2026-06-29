@@ -177,6 +177,24 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertGreaterEqual(len(workbook["Por dia"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Top 3 Historico"]._charts), 1)
+        self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.min, 0)
+        self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.max, 1)
+
+    def test_build_workbook_uppercases_and_alpha_sorts_defect_names(self):
+        workbook = build_workbook(self.make_params(), SAMPLE_REJECT_SUMMARY)
+
+        conditions = workbook["Per Condition"]
+        top3 = workbook["Top 3 Historico"]
+        self.assertEqual(conditions["B3"].value, "DENT")
+        self.assertEqual(conditions["B4"].value, "SCRATCH")
+        self.assertEqual(conditions["B8"].value, "DENT")
+        self.assertEqual(conditions["C8"].value, "SCRATCH")
+        self.assertEqual(top3["B3"].value, "DENT")
+        self.assertEqual(top3["B4"].value, "SCRATCH")
+        self.assertEqual(top3["B6"].value, "DENT")
+        self.assertEqual(top3["C6"].value, "SCRATCH")
+        self.assertEqual(top3._charts[0].y_axis.scaling.min, 0)
+        self.assertEqual(top3._charts[0].y_axis.scaling.max, 1)
 
     def test_generate_report_writes_xlsx_file(self):
         session = FakeSession()

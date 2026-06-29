@@ -95,6 +95,31 @@ class ReportsTests(unittest.TestCase):
         self.assertIn("ROW_NUMBER() OVER", top3_query)
         self.assertIn("class_rank <= 3", top3_query)
 
+    def test_defect_aggregates_use_canonical_names_and_alpha_order(self):
+        db = FakeDb([])
+
+        reports.get_defects(db)
+        reports.get_station_defects(db)
+
+        defects_query = db.calls[0][0]
+        station_defects_query = db.calls[1][0]
+        self.assertIn("COALESCE(NULLIF(UPPER(TRIM(main_defect)), ''), 'UNCLASSIFIED') AS class_name", defects_query)
+        self.assertIn("GROUP BY COALESCE(NULLIF(UPPER(TRIM(main_defect)), ''), 'UNCLASSIFIED')", defects_query)
+        self.assertIn("ORDER BY class_name ASC", defects_query)
+        self.assertNotIn("ORDER BY piece_count DESC", defects_query)
+        self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", station_defects_query)
+
+    def test_reject_summary_uses_canonical_condition_names_and_alpha_condition_order(self):
+        db = SequencedDb([[], [], [], [], []])
+
+        reports.get_reject_summary(db)
+
+        filtered_query = db.calls[2][0]
+        totals_query = db.calls[3][0]
+        self.assertIn("COALESCE(NULLIF(UPPER(TRIM(main_defect)), ''), 'UNCLASSIFIED') AS condition_name", filtered_query)
+        self.assertIn("ORDER BY reject_date ASC, source_station ASC NULLS LAST, class_name ASC", filtered_query)
+        self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", totals_query)
+
 
 if __name__ == "__main__":
     unittest.main()

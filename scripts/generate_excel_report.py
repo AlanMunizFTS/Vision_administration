@@ -116,6 +116,28 @@ def _station_name(value):
     return value or "Sin estacion"
 
 
+def _defect_name(value):
+    text = str(value or "").strip().upper()
+    return text or "UNCLASSIFIED"
+
+
+def _nice_axis_max(values):
+    max_value = max([_normalize_int(value) for value in values or []] or [0])
+    if max_value <= 0:
+        return 1
+    magnitude = 10 ** (len(str(max_value)) - 1)
+    normalized = max_value / magnitude
+    if normalized <= 1:
+        nice_normalized = 1
+    elif normalized <= 2:
+        nice_normalized = 2
+    elif normalized <= 5:
+        nice_normalized = 5
+    else:
+        nice_normalized = 10
+    return nice_normalized * magnitude
+
+
 def _safe_sheet_title(title):
     cleaned = re.sub(r"[\[\]:*?/\\]", "-", str(title or "Sheet")).strip()
     return (cleaned or "Sheet")[:31]
@@ -201,20 +223,20 @@ def _station_list(data):
 def _condition_classes(rows):
     totals = {}
     for row in rows or []:
-        class_name = row.get("class_name")
+        class_name = _defect_name(row.get("class_name"))
         nok_pieces = _normalize_int(row.get("nok_pieces"))
-        if not class_name or class_name == "OK" or nok_pieces <= 0:
+        if class_name == "OK" or nok_pieces <= 0:
             continue
         totals[class_name] = totals.get(class_name, 0) + nok_pieces
-    return [name for name, _ in sorted(totals.items(), key=lambda item: (-item[1], item[0]))]
+    return sorted(totals)
 
 
 def _condition_daily_rows(rows, classes):
     by_date = {}
     for row in rows or []:
-        class_name = row.get("class_name")
+        class_name = _defect_name(row.get("class_name"))
         nok_pieces = _normalize_int(row.get("nok_pieces"))
-        if not class_name or class_name == "OK" or nok_pieces <= 0:
+        if class_name == "OK" or nok_pieces <= 0:
             continue
         day = _date_label(row.get("reject_date"))
         if not day:
@@ -234,8 +256,8 @@ def _top_history_rows(rows, classes):
     by_date = {}
     for row in rows or []:
         day = _date_label(row.get("reject_date"))
-        class_name = row.get("class_name")
-        if not day or not class_name:
+        class_name = _defect_name(row.get("class_name"))
+        if not day:
             continue
         by_date.setdefault(day, {"reject_date": day})
         by_date[day][class_name] = _normalize_int(row.get("nok_pieces"))
@@ -301,6 +323,8 @@ def _write_daily_sheet(workbook, data):
         chart.title = "Tasa de rechazo (% NOK) por dia"
         chart.y_axis.title = "% NOK"
         chart.x_axis.title = "Fecha"
+        chart.y_axis.scaling.min = 0
+        chart.y_axis.scaling.max = 1
         chart.height = 9
         chart.width = 18
         categories = Reference(sheet, min_col=1, min_row=header_row + 1, max_row=max_row)
@@ -333,13 +357,15 @@ def _write_conditions_sheet(workbook, data):
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
-        totals = sorted(
-            totals_by_station.get(station) or [],
-            key=lambda item: (-_normalize_int(item.get("nok_pieces")), str(item.get("class_name") or "")),
-        )
+        grouped_totals = {}
+        for row in totals_by_station.get(station) or []:
+            class_name = _defect_name(row.get("class_name"))
+            if class_name == "OK":
+                continue
+            grouped_totals[class_name] = grouped_totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
         total_rows = [
-            [label, row.get("class_name") or "UNCLASSIFIED", _normalize_int(row.get("nok_pieces"))]
-            for row in totals
+            [label, class_name, nok_pieces]
+            for class_name, nok_pieces in sorted(grouped_totals.items())
         ]
         total_header, total_max_row, _ = _append_table(
             sheet,
@@ -385,6 +411,7 @@ def _write_top3_sheet(workbook, data):
     sheet = workbook.create_sheet("Top 3 Historico")
     stations = _station_list(data)
     history_by_station = _group_by(data.get("top3_history") or [], "source_station")
+    count_axis_max = _nice_axis_max(row.get("nok_pieces") for row in data.get("top3_history") or [])
     row_cursor = 1
 
     if not stations:
@@ -399,19 +426,18 @@ def _write_top3_sheet(workbook, data):
             key=lambda item: (
                 _normalize_int(item.get("class_rank")) or 99,
                 _date_label(item.get("reject_date")),
-                str(item.get("class_name") or ""),
+                _defect_name(item.get("class_name")),
             ),
         )
-        classes = []
         totals = {}
         ranks = {}
         for row in history:
-            class_name = row.get("class_name")
+            class_name = _defect_name(row.get("class_name"))
             if not class_name or class_name in totals:
                 continue
-            classes.append(class_name)
             totals[class_name] = _normalize_int(row.get("total_nok_pieces"))
             ranks[class_name] = _normalize_int(row.get("class_rank"))
+        classes = sorted(totals)
 
         sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
@@ -445,6 +471,8 @@ def _write_top3_sheet(workbook, data):
             chart.title = f"{label} - Top 3 historico"
             chart.y_axis.title = "NOK"
             chart.x_axis.title = "Fecha"
+            chart.y_axis.scaling.min = 0
+            chart.y_axis.scaling.max = count_axis_max
             chart.height = 8
             chart.width = 16
             chart.add_data(

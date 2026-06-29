@@ -19,6 +19,10 @@ END
 """
 
 
+def defect_name_expr(column_name):
+    return f"COALESCE(NULLIF(UPPER(TRIM({column_name})), ''), 'UNCLASSIFIED')"
+
+
 def normalize_value(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -315,15 +319,15 @@ def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=N
     query = f"""
     {piece_cte()}
     SELECT
-        COALESCE(main_defect, 'UNCLASSIFIED') AS class_name,
+        {defect_name_expr("main_defect")} AS class_name,
         COUNT(*) AS piece_count,
         MAX(main_confidence) AS max_confidence,
         AVG(main_confidence) AS avg_confidence
     FROM pieces
     {where_sql}
     {"AND" if where_sql else "WHERE"} model_result = 'NOK'
-    GROUP BY COALESCE(main_defect, 'UNCLASSIFIED')
-    ORDER BY piece_count DESC, class_name ASC
+    GROUP BY {defect_name_expr("main_defect")}
+    ORDER BY class_name ASC
     """
     return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
 
@@ -339,15 +343,15 @@ def get_station_defects(db, start_at=None, end_at=None, source_id=None, jsn=None
     {piece_cte()}
     SELECT
         source_station,
-        COALESCE(main_defect, 'UNCLASSIFIED') AS class_name,
+        {defect_name_expr("main_defect")} AS class_name,
         COUNT(*) AS piece_count,
         MAX(main_confidence) AS max_confidence,
         AVG(main_confidence) AS avg_confidence
     FROM pieces
     {where_sql}
     {"AND" if where_sql else "WHERE"} model_result = 'NOK'
-    GROUP BY source_station, COALESCE(main_defect, 'UNCLASSIFIED')
-    ORDER BY source_station ASC NULLS LAST, piece_count DESC, class_name ASC
+    GROUP BY source_station, {defect_name_expr("main_defect")}
+    ORDER BY source_station ASC NULLS LAST, class_name ASC
     """
     return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
 
@@ -439,7 +443,7 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
             jsn,
             model_result,
             captured_at,
-            COALESCE(main_defect, 'UNCLASSIFIED') AS condition_name
+            {defect_name_expr("main_defect")} AS condition_name
         FROM pieces
         {where_sql}
     )
@@ -507,7 +511,7 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         day_bounds.period_start,
         day_bounds.period_end,
         CASE WHEN model_result = 'OK' THEN 'OK' ELSE condition_name END
-    ORDER BY reject_date ASC, source_station ASC NULLS LAST, nok_pieces DESC, class_name ASC
+    ORDER BY reject_date ASC, source_station ASC NULLS LAST, class_name ASC
     """
 
     condition_totals_query = f"""
@@ -519,7 +523,7 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
     FROM filtered_pieces
     WHERE model_result = 'NOK'
     GROUP BY source_station, condition_name
-    ORDER BY source_station ASC NULLS LAST, nok_pieces DESC, class_name ASC
+    ORDER BY source_station ASC NULLS LAST, class_name ASC
     """
 
     top3_history_query = f"""
