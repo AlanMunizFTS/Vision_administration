@@ -650,7 +650,7 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         SELECT
             station_pair,
             ARRAY_REMOVE(ARRAY_AGG(DISTINCT side_station ORDER BY side_station), NULL) AS source_stations
-        FROM filtered_combined_pieces
+        FROM combined_pieces
         LEFT JOIN LATERAL unnest(source_stations) AS side_station ON true
         GROUP BY station_pair
     ),
