@@ -131,10 +131,6 @@ def _report_defect_names(data):
             name = _defect_name(row.get("class_name"))
             if name != "OK":
                 names.add(name)
-        for row in (data.get("combined") or {}).get(collection) or []:
-            name = _defect_name(row.get("class_name"))
-            if name != "OK":
-                names.add(name)
     return sorted(names)
 
 
@@ -311,7 +307,7 @@ def _top_history_rows(rows, classes):
     output = []
     for day in sorted(by_date):
         item = by_date[day]
-        output.append([day, *[_normalize_int(item.get(name)) for name in classes]])
+        output.append([day, *[_normalize_int(item[name]) if name in item else "" for name in classes]])
     return output
 
 
@@ -760,13 +756,14 @@ def build_workbook(report_params, data):
     workbook = Workbook()
     data = data or {}
     colors_by_defect = _defect_color_map(data)
+    combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     daily_sheet = _write_daily_sheet(workbook, data)
     _append_combined_daily_section(daily_sheet, data)
     _fit_columns(daily_sheet)
     conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect)
-    _append_combined_conditions_section(conditions_sheet, data, colors_by_defect)
+    _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect)
     top3_sheet = _write_top3_sheet(workbook, data, colors_by_defect)
-    _append_combined_top3_section(top3_sheet, data, colors_by_defect)
+    _append_combined_top3_section(top3_sheet, data, combined_colors_by_defect)
     return workbook
 
 

@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from openpyxl import load_workbook
 
 from scripts.generate_excel_report import (
+    COLORS,
     DEFAULT_DAYS,
     ReportParams,
     build_workbook,
@@ -242,6 +244,7 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(top3["B4"].value, "SCRATCH")
         self.assertEqual(top3["B6"].value, "DENT")
         self.assertEqual(top3["C6"].value, "SCRATCH")
+        self.assertEqual(top3["B7"].value, "")
         self.assertEqual(top3._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(top3._charts[0].y_axis.scaling.max, 1)
         condition_colors = [
@@ -253,6 +256,39 @@ class GenerateExcelReportTests(unittest.TestCase):
             for series in top3._charts[0].series
         ]
         self.assertEqual(condition_colors, top3_colors)
+
+    def test_combined_sections_use_frontend_independent_color_map(self):
+        data = deepcopy(SAMPLE_REJECT_SUMMARY)
+        data["combined"]["condition_totals"] = [
+            {"station_pair": "station", "class_name": "scratch", "nok_pieces": 3},
+        ]
+        data["combined"]["condition_periods"] = [
+            {
+                "station_pair": "station",
+                "reject_date": "2026-06-26",
+                "class_name": "scratch",
+                "nok_pieces": 3,
+                "ok_pieces": 0,
+                "total_pieces": 3,
+            }
+        ]
+        data["combined"]["top3_history"] = [
+            {
+                "station_pair": "station",
+                "class_name": "scratch",
+                "total_nok_pieces": 3,
+                "class_rank": 1,
+                "reject_date": "2026-06-26",
+                "nok_pieces": 3,
+            }
+        ]
+
+        workbook = build_workbook(self.make_params(), data)
+
+        combined_condition_chart = workbook["Per Condition"]._charts[1]
+        combined_top3_chart = workbook["Top 3 Historico"]._charts[1]
+        self.assertEqual(combined_condition_chart.series[0].data_points[0].spPr.solidFill.srgbClr, COLORS[0])
+        self.assertEqual(combined_top3_chart.series[0].graphicalProperties.solidFill.srgbClr, COLORS[0])
 
     def test_generate_report_writes_xlsx_file(self):
         session = FakeSession()
