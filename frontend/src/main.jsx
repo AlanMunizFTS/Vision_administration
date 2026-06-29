@@ -31,7 +31,11 @@ function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
   const merged = { ...filters, ...extra };
   for (const [key, value] of Object.entries(merged)) {
-    if (value !== undefined && value !== null && String(value).trim() !== "") {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined && item !== null && String(item).trim() !== "") params.append(key, item);
+      }
+    } else if (value !== undefined && value !== null && String(value).trim() !== "") {
       params.set(key, value);
     }
   }
@@ -40,7 +44,23 @@ function buildQuery(filters, extra = {}) {
 }
 
 function sameFilters(left, right) {
-  return ["start_at", "end_at", "source_station"].every((key) => (left?.[key] || "") === (right?.[key] || ""));
+  return sameDateFilters(left, right) && sameStationFilters(left, right);
+}
+
+function sameDateFilters(left, right) {
+  return ["start_at", "end_at"].every((key) => (left?.[key] || "") === (right?.[key] || ""));
+}
+
+function stationFilterList(filters) {
+  if (Array.isArray(filters?.source_stations)) return filters.source_stations;
+  if (filters?.source_station) return [filters.source_station];
+  return [];
+}
+
+function sameStationFilters(left, right) {
+  const leftStations = [...stationFilterList(left)].sort();
+  const rightStations = [...stationFilterList(right)].sort();
+  return leftStations.length === rightStations.length && leftStations.every((station, index) => station === rightStations[index]);
 }
 
 async function fetchJson(path) {
@@ -145,6 +165,36 @@ function stationList(data) {
   for (const row of data?.condition_totals || []) names.add(row.source_station || "");
   for (const row of data?.top3_history || []) names.add(row.source_station || "");
   return [...names].sort((a, b) => stationName(a).localeCompare(stationName(b)));
+}
+
+function dashboardFilters(filters) {
+  return {
+    start_at: toApiDateTime(filters.start_at),
+    end_at: toApiDateTime(filters.end_at),
+    source_stations: stationFilterList(filters)
+  };
+}
+
+function dateFilters(filters) {
+  return {
+    start_at: filters?.start_at || "",
+    end_at: filters?.end_at || ""
+  };
+}
+
+function filterReportData(data, sourceStations = []) {
+  if (!data) return null;
+  const selectedStations = new Set(sourceStations);
+  if (!selectedStations.size) return data;
+  const filterRows = (rows = []) => rows.filter((row) => selectedStations.has(row.source_station || ""));
+  return {
+    ...data,
+    stations: filterRows(data.stations),
+    daily: filterRows(data.daily),
+    condition_periods: filterRows(data.condition_periods),
+    condition_totals: filterRows(data.condition_totals),
+    top3_history: filterRows(data.top3_history)
+  };
 }
 
 function dailyChartRows(data, stations) {
@@ -470,11 +520,12 @@ function App() {
   const [options, setOptions] = useState({ source_stations: [] });
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
-    source_station: ""
+    source_stations: []
   }));
+  const [appliedFilters, setAppliedFilters] = useState(null);
+  const [loadedData, setLoadedData] = useState(null);
+  const [loadedDateFilters, setLoadedDateFilters] = useState(null);
   const [activeTab, setActiveTab] = useState("daily");
-  const [data, setData] = useState(null);
-  const [loadedFilters, setLoadedFilters] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
@@ -487,22 +538,28 @@ function App() {
       .catch((exc) => setError(exc.message));
   }, []);
 
-  const apiFilters = useMemo(
-    () => ({
-      start_at: toApiDateTime(filters.start_at),
-      end_at: toApiDateTime(filters.end_at),
-      source_station: filters.source_station
-    }),
-    [filters]
+  const apiFilters = useMemo(() => dashboardFilters(filters), [filters]);
+  const visibleData = useMemo(
+    () => filterReportData(loadedData, appliedFilters?.source_stations || []),
+    [loadedData, appliedFilters]
   );
 
-  async function loadData() {
+  async function applyFilters(targetFilters = filters) {
+    const nextFilters = dashboardFilters(targetFilters);
+    const nextDateFilters = dateFilters(nextFilters);
+    if (loadedData && sameDateFilters(nextDateFilters, loadedDateFilters)) {
+      setAppliedFilters(nextFilters);
+      setError("");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
-      const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(apiFilters)}`);
-      setData(payload);
-      setLoadedFilters(apiFilters);
+      const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(nextDateFilters)}`);
+      setLoadedData(payload);
+      setLoadedDateFilters(nextDateFilters);
+      setAppliedFilters(nextFilters);
     } catch (exc) {
       setError(exc.message);
     } finally {
@@ -511,24 +568,29 @@ function App() {
   }
 
   useEffect(() => {
-    if (filters.start_at || filters.end_at) {
-      loadData();
-    }
-  }, [apiFilters]);
+    applyFilters();
+  }, []);
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
+  function updateSourceStations(event) {
+    updateFilter(
+      "source_stations",
+      Array.from(event.target.selectedOptions).map((option) => option.value)
+    );
+  }
+
   async function downloadExcel() {
-    if (!data || !loadedFilters || !sameFilters(apiFilters, loadedFilters)) return;
+    if (!visibleData || !appliedFilters || !sameFilters(apiFilters, appliedFilters)) return;
     setExporting(true);
     setError("");
     try {
       const response = await fetch("/api/v1/reports/excel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filters: loadedFilters, data })
+        body: JSON.stringify({ filters: appliedFilters, data: visibleData })
       });
       if (!response.ok) {
         const text = await response.text();
@@ -550,9 +612,11 @@ function App() {
     }
   }
 
-  const stations = stationList(data);
-  const colorsByDefect = useMemo(() => defectColorMap(data), [data]);
-  const canDownloadExcel = Boolean(data) && !loading && !exporting && sameFilters(apiFilters, loadedFilters);
+  const stations = stationList(visibleData);
+  const colorsByDefect = useMemo(() => defectColorMap(visibleData), [visibleData]);
+  const canDownloadExcel = Boolean(visibleData) && !loading && !exporting && sameFilters(apiFilters, appliedFilters);
+  const selectedStationCount = filters.source_stations.length;
+  const sourceStationLabel = selectedStationCount ? `${selectedStationCount} seleccionadas` : "Todas";
 
   return (
     <main>
@@ -562,9 +626,9 @@ function App() {
           <p>Analisis por Tesla / lado, condicion y Top 3 historico</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={loadData} disabled={loading} title="Actualizar">
+          <button type="button" onClick={() => applyFilters()} disabled={loading} title="Aplicar filtros">
             <RefreshCw size={17} />
-            Actualizar
+            {loading ? "Aplicando" : "Aplicar"}
           </button>
           <button type="button" onClick={downloadExcel} disabled={!canDownloadExcel} title="Descargar Excel">
             <Download size={17} />
@@ -582,14 +646,22 @@ function App() {
           Fin
           <input type="datetime-local" value={filters.end_at} onChange={(event) => updateFilter("end_at", event.target.value)} />
         </label>
-        <label>
-          Source station
-          <select value={filters.source_station} onChange={(event) => updateFilter("source_station", event.target.value)}>
-            <option value="">Todas</option>
+        <label className="station-filter">
+          <span>Source station</span>
+          <select multiple value={filters.source_stations} onChange={updateSourceStations}>
             {(options.source_stations || []).map((station) => (
               <option key={station} value={station}>{stationName(station)}</option>
             ))}
           </select>
+          <span className="filter-hint">{sourceStationLabel}</span>
+          <span className="filter-actions">
+            <button type="button" className="small-button" onClick={() => updateFilter("source_stations", [])}>
+              Todas
+            </button>
+            <button type="button" className="small-button" onClick={() => updateFilter("source_stations", options.source_stations || [])}>
+              Seleccionar todas
+            </button>
+          </span>
         </label>
       </section>
 
@@ -602,10 +674,10 @@ function App() {
         ))}
       </nav>
 
-      {data && activeTab === "daily" ? <DailyTab data={data} stations={stations} /> : null}
-      {data && activeTab === "conditions" ? <ConditionsTab data={data} stations={stations} colorsByDefect={colorsByDefect} /> : null}
-      {data && activeTab === "top3" ? <Top3Tab data={data} stations={stations} colorsByDefect={colorsByDefect} /> : null}
-      {!data && !loading ? <Empty label="Sin datos cargados" /> : null}
+      {visibleData && activeTab === "daily" ? <DailyTab data={visibleData} stations={stations} /> : null}
+      {visibleData && activeTab === "conditions" ? <ConditionsTab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} /> : null}
+      {visibleData && activeTab === "top3" ? <Top3Tab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} /> : null}
+      {!visibleData && !loading ? <Empty label="Sin datos cargados" /> : null}
     </main>
   );
 }

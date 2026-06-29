@@ -15,6 +15,11 @@ EMPTY_REJECT_SUMMARY = {
 }
 
 
+class FakeWorkbook:
+    def save(self, stream):
+        stream.write(b"excel")
+
+
 class ExcelEndpointTests(unittest.TestCase):
     def test_excel_report_uses_explicit_dates_and_station_only(self):
         fake_db = object()
@@ -53,6 +58,23 @@ class ExcelEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         get_reject_summary.assert_not_called()
+
+    def test_excel_report_from_summary_accepts_source_stations_array(self):
+        with patch.object(main, "build_workbook", return_value=FakeWorkbook()) as build_workbook:
+            response = main.excel_report_from_summary(
+                {
+                    "filters": {
+                        "start_at": "2026-06-19 00:00:00",
+                        "end_at": "2026-06-26 23:59:59",
+                        "source_stations": ["station-a", "station-b"],
+                    },
+                    "data": EMPTY_REJECT_SUMMARY,
+                }
+            )
+
+        self.assertEqual(response.media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        report_params = build_workbook.call_args.args[0]
+        self.assertEqual(report_params.source_station, "station-a, station-b")
 
     def test_excel_report_uses_default_period_when_dates_are_missing(self):
         fake_db = object()

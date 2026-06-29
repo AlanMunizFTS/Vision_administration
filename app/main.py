@@ -264,6 +264,14 @@ def _workbook_response(workbook):
     )
 
 
+def _source_station_filter_label(filters):
+    source_stations = filters.get("source_stations")
+    if isinstance(source_stations, list):
+        cleaned = [str(station).strip() for station in source_stations if str(station or "").strip()]
+        return ", ".join(cleaned) or None
+    return filters.get("source_station") or None
+
+
 @app.get("/api/v1/reports/excel")
 def excel_report(
     start_at: str | None = None,
@@ -304,7 +312,7 @@ def excel_report_from_summary(payload: dict = Body(...)):
         api_url="frontend",
         start_at=str(filters.get("start_at") or ""),
         end_at=str(filters.get("end_at") or ""),
-        source_station=filters.get("source_station") or None,
+        source_station=_source_station_filter_label(filters),
     )
     workbook = build_workbook(report_params, data)
     return _workbook_response(workbook)

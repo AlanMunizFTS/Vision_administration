@@ -105,6 +105,34 @@ select {
   font: inherit;
 }
 
+select[multiple] {
+  min-height: 94px;
+  padding: 5px;
+}
+
+.station-filter {
+  align-content: start;
+}
+
+.filter-hint {
+  color: #69717c;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: none;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.small-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
 .error,
 .loading {
   margin-bottom: 14px;
