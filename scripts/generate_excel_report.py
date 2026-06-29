@@ -131,6 +131,10 @@ def _report_defect_names(data):
             name = _defect_name(row.get("class_name"))
             if name != "OK":
                 names.add(name)
+        for row in (data.get("combined") or {}).get(collection) or []:
+            name = _defect_name(row.get("class_name"))
+            if name != "OK":
+                names.add(name)
     return sorted(names)
 
 
@@ -239,6 +243,27 @@ def _station_list(data):
         for row in data.get(collection) or []:
             names.add(row.get("source_station") or "")
     return sorted(names, key=_station_name)
+
+
+def _combined_as_station_data(data):
+    combined = (data or {}).get("combined") or {}
+
+    def map_rows(rows):
+        return [
+            {
+                **row,
+                "source_station": row.get("station_pair") or row.get("source_station") or "",
+            }
+            for row in rows or []
+        ]
+
+    return {
+        "stations": map_rows(combined.get("stations")),
+        "daily": map_rows(combined.get("daily")),
+        "condition_periods": map_rows(combined.get("condition_periods")),
+        "condition_totals": map_rows(combined.get("condition_totals")),
+        "top3_history": map_rows(combined.get("top3_history")),
+    }
 
 
 def _condition_classes(rows):
@@ -360,6 +385,73 @@ def _write_daily_sheet(workbook, data):
     return sheet
 
 
+def _append_combined_daily_section(sheet, data):
+    combined_data = _combined_as_station_data(data)
+    if not any(combined_data.values()):
+        return
+
+    row_cursor = sheet.max_row + 3
+    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Por dia")
+    sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+    row_cursor += 1
+
+    stations = _station_list(combined_data)
+    daily_rows = combined_data.get("daily") or []
+    dates = sorted({_date_label(row.get("reject_date")) for row in daily_rows if _date_label(row.get("reject_date"))})
+    by_station_date = {
+        (row.get("source_station") or "", _date_label(row.get("reject_date"))): row
+        for row in daily_rows
+    }
+
+    headers = ["Fecha"]
+    for station in stations:
+        label = _station_name(station)
+        headers.extend([f"{label} OK", f"{label} NOK", f"{label} Total", f"{label} % OK", f"{label} % NOK"])
+
+    rows = []
+    for day in dates:
+        output = [day]
+        for station in stations:
+            row = by_station_date.get((station, day))
+            if row:
+                output.extend(
+                    [
+                        _normalize_int(row.get("ok_pieces")),
+                        _normalize_int(row.get("nok_pieces")),
+                        _normalize_int(row.get("total_pieces")),
+                        _normalize_number(row.get("pct_ok")),
+                        _normalize_number(row.get("pct_nok")),
+                    ]
+                )
+            else:
+                output.extend([0, 0, 0, "", ""])
+        rows.append(output)
+
+    if not headers[1:]:
+        headers = ["Fecha", "Sin datos"]
+    header_row, max_row, _ = _append_table(sheet, "tblPorDiaCombinado", headers, rows, start_row=row_cursor)
+    percent_cols = [5 + (idx * 5) for idx in range(len(stations))]
+    percent_cols.extend([6 + (idx * 5) for idx in range(len(stations))])
+    _format_percentage_columns(sheet, percent_cols, start_row=header_row + 1)
+
+    if rows and stations:
+        chart = LineChart()
+        chart.title = "Combinado LEFT+RIGHT - Tasa de rechazo (% NOK) por dia"
+        chart.y_axis.title = "% NOK"
+        chart.x_axis.title = "Fecha"
+        chart.y_axis.scaling.min = 0
+        chart.y_axis.scaling.max = 1
+        chart.height = 9
+        chart.width = 18
+        categories = Reference(sheet, min_col=1, min_row=header_row + 1, max_row=max_row)
+        for idx, _station in enumerate(stations):
+            col_idx = 6 + (idx * 5)
+            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=header_row, max_row=max_row)
+            chart.add_data(values, titles_from_data=True)
+        chart.set_categories(categories)
+        sheet.add_chart(chart, f"{get_column_letter(len(headers) + 2)}{header_row}")
+
+
 def _write_conditions_sheet(workbook, data, colors_by_defect):
     sheet = workbook.create_sheet("Per Condition")
     stations = _station_list(data)
@@ -430,6 +522,74 @@ def _write_conditions_sheet(workbook, data, colors_by_defect):
     sheet.freeze_panes = "A2"
     _fit_columns(sheet)
     return sheet
+
+
+def _append_combined_conditions_section(sheet, data, colors_by_defect):
+    combined_data = _combined_as_station_data(data)
+    stations = _station_list(combined_data)
+    if not stations:
+        return
+
+    totals_by_station = _group_by(combined_data.get("condition_totals") or [], "source_station")
+    periods_by_station = _group_by(combined_data.get("condition_periods") or [], "source_station")
+    row_cursor = sheet.max_row + 3
+    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Per Condition")
+    sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+    row_cursor += 2
+
+    for station_idx, station in enumerate(stations, start=1):
+        label = _station_name(station)
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Rechazos por clase")
+        sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+        row_cursor += 1
+
+        grouped_totals = {}
+        for row in totals_by_station.get(station) or []:
+            class_name = _defect_name(row.get("class_name"))
+            if class_name == "OK":
+                continue
+            grouped_totals[class_name] = grouped_totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
+        total_rows = [[label, class_name, nok_pieces] for class_name, nok_pieces in sorted(grouped_totals.items())]
+        total_header, total_max_row, _ = _append_table(
+            sheet,
+            f"tblCombinedConditionTotals{station_idx}",
+            ["Source Station", "Class Name", "NOK"],
+            total_rows,
+            start_row=row_cursor,
+        )
+
+        if total_rows:
+            chart = PieChart()
+            chart.title = f"{label} - Rechazos por clase"
+            chart.height = 8
+            chart.width = 12
+            chart.add_data(Reference(sheet, min_col=3, min_row=total_header, max_row=total_max_row), titles_from_data=True)
+            chart.set_categories(Reference(sheet, min_col=2, min_row=total_header + 1, max_row=total_max_row))
+            chart.series[0].data_points = [
+                DataPoint(idx=idx, spPr=GraphicalProperties(solidFill=_defect_color(colors_by_defect, row[1])))
+                for idx, row in enumerate(total_rows)
+            ]
+            sheet.add_chart(chart, "E" + str(total_header))
+
+        row_cursor = total_max_row + 3
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
+        sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+        row_cursor += 1
+
+        periods = periods_by_station.get(station) or []
+        classes = _condition_classes(periods)
+        headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
+        daily_rows = _condition_daily_rows(periods, classes)
+        _, daily_max_row, _ = _append_table(
+            sheet,
+            f"tblCombinedConditionDaily{station_idx}",
+            headers,
+            daily_rows,
+            start_row=row_cursor,
+        )
+        row_cursor = daily_max_row + 3
+
+    _fit_columns(sheet)
 
 
 def _write_top3_sheet(workbook, data, colors_by_defect):
@@ -516,13 +676,97 @@ def _write_top3_sheet(workbook, data, colors_by_defect):
     return sheet
 
 
+def _append_combined_top3_section(sheet, data, colors_by_defect):
+    combined_data = _combined_as_station_data(data)
+    stations = _station_list(combined_data)
+    if not stations:
+        return
+
+    history_by_station = _group_by(combined_data.get("top3_history") or [], "source_station")
+    count_axis_max = _nice_axis_max(row.get("nok_pieces") for row in combined_data.get("top3_history") or [])
+    row_cursor = sheet.max_row + 3
+    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Top 3 Historico")
+    sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+    row_cursor += 2
+
+    for station_idx, station in enumerate(stations, start=1):
+        label = _station_name(station)
+        history = sorted(
+            history_by_station.get(station) or [],
+            key=lambda item: (
+                _normalize_int(item.get("class_rank")) or 99,
+                _date_label(item.get("reject_date")),
+                _defect_name(item.get("class_name")),
+            ),
+        )
+        totals = {}
+        ranks = {}
+        for row in history:
+            class_name = _defect_name(row.get("class_name"))
+            if not class_name or class_name in totals:
+                continue
+            totals[class_name] = _normalize_int(row.get("total_nok_pieces"))
+            ranks[class_name] = _normalize_int(row.get("class_rank"))
+        classes = sorted(totals)
+
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
+        sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
+        row_cursor += 1
+
+        summary_rows = [[ranks.get(name) or idx + 1, name, totals.get(name, 0)] for idx, name in enumerate(classes)]
+        _, summary_max_row, _ = _append_table(
+            sheet,
+            f"tblCombinedTop3Totals{station_idx}",
+            ["Top", "Class Name", "NOK acumulado"],
+            summary_rows,
+            start_row=row_cursor,
+        )
+
+        row_cursor = summary_max_row + 2
+        headers = ["Fecha", *classes] if classes else ["Fecha", "Sin datos"]
+        chart_rows = _top_history_rows(history, classes)
+        history_header, history_max_row, history_max_col = _append_table(
+            sheet,
+            f"tblCombinedTop3History{station_idx}",
+            headers,
+            chart_rows,
+            start_row=row_cursor,
+        )
+
+        if chart_rows and classes:
+            chart = BarChart()
+            chart.title = f"{label} - Top 3 historico"
+            chart.y_axis.title = "NOK"
+            chart.x_axis.title = "Fecha"
+            chart.y_axis.scaling.min = 0
+            chart.y_axis.scaling.max = count_axis_max
+            chart.height = 8
+            chart.width = 16
+            chart.add_data(
+                Reference(sheet, min_col=2, max_col=history_max_col, min_row=history_header, max_row=history_max_row),
+                titles_from_data=True,
+            )
+            for idx, class_name in enumerate(classes):
+                chart.series[idx].graphicalProperties.solidFill = _defect_color(colors_by_defect, class_name)
+            chart.set_categories(Reference(sheet, min_col=1, min_row=history_header + 1, max_row=history_max_row))
+            sheet.add_chart(chart, "E" + str(history_header))
+
+        row_cursor = history_max_row + 4
+
+    _fit_columns(sheet)
+
+
 def build_workbook(report_params, data):
     workbook = Workbook()
     data = data or {}
     colors_by_defect = _defect_color_map(data)
-    _write_daily_sheet(workbook, data)
-    _write_conditions_sheet(workbook, data, colors_by_defect)
-    _write_top3_sheet(workbook, data, colors_by_defect)
+    daily_sheet = _write_daily_sheet(workbook, data)
+    _append_combined_daily_section(daily_sheet, data)
+    _fit_columns(daily_sheet)
+    conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect)
+    _append_combined_conditions_section(conditions_sheet, data, colors_by_defect)
+    top3_sheet = _write_top3_sheet(workbook, data, colors_by_defect)
+    _append_combined_top3_section(top3_sheet, data, colors_by_defect)
     return workbook
 
 

@@ -68,6 +68,20 @@ class ReportsTests(unittest.TestCase):
         self.assertNotIn("jsn = %s", base_where)
         self.assertNotIn("jsn = %s", piece_where)
 
+    def test_station_pair_expr_removes_left_right_suffix(self):
+        expr = reports.station_pair_expr("source_station")
+
+        self.assertIn("regexp_replace(source_station", expr)
+        self.assertIn("_(LEFT|RIGHT)$", expr)
+        self.assertIn("'i'", expr)
+
+    def test_combined_piece_filters_match_side_or_pair(self):
+        where_sql, params = reports.build_combined_piece_filters(source_station="ART_ENDFORM_1859_LEFT", source_id=2)
+
+        self.assertIn("%s = ANY(source_stations) OR station_pair = %s", where_sql)
+        self.assertIn("%s = ANY(source_ids)", where_sql)
+        self.assertEqual(params, ["ART_ENDFORM_1859_LEFT", "ART_ENDFORM_1859_LEFT", 2])
+
     def test_reject_summary_returns_excel_shaped_collections(self):
         db = SequencedDb(
             [
@@ -76,19 +90,27 @@ class ReportsTests(unittest.TestCase):
                 [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
                 [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
                 [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
+                [{"station_pair": "Tesla 1", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
+                [{"station_pair": "Tesla 1", "reject_date": "2026-06-01", "pct_nok": 0.3}],
+                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
+                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
+                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
             ]
         )
 
         result = reports.get_reject_summary(db, source_station="Tesla 1 - Left")
 
-        self.assertEqual(set(result), {"stations", "daily", "condition_periods", "condition_totals", "top3_history"})
+        self.assertEqual(set(result), {"stations", "daily", "condition_periods", "condition_totals", "top3_history", "combined"})
         self.assertEqual(result["stations"][0]["source_station"], "Tesla 1 - Left")
-        self.assertEqual(len(db.calls), 5)
-        for _, params in db.calls:
+        self.assertEqual(result["combined"]["stations"][0]["station_pair"], "Tesla 1")
+        self.assertEqual(len(db.calls), 10)
+        for _, params in db.calls[:5]:
             self.assertEqual(params, ["Tesla 1 - Left"])
+        for _, params in db.calls[5:]:
+            self.assertEqual(params, ["Tesla 1 - Left", "Tesla 1 - Left"])
 
     def test_reject_summary_groups_by_day_station_and_top3_class(self):
-        db = SequencedDb([[], [], [], [], []])
+        db = SequencedDb([[], [], [], [], [], [], [], [], [], []])
 
         reports.get_reject_summary(db)
 
@@ -117,7 +139,7 @@ class ReportsTests(unittest.TestCase):
         self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", station_defects_query)
 
     def test_reject_summary_uses_canonical_condition_names_and_alpha_condition_order(self):
-        db = SequencedDb([[], [], [], [], []])
+        db = SequencedDb([[], [], [], [], [], [], [], [], [], []])
 
         reports.get_reject_summary(db)
 

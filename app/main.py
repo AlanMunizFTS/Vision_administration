@@ -265,6 +265,10 @@ def _workbook_response(workbook):
 
 
 def _source_station_filter_label(filters):
+    station_pairs = filters.get("station_pairs")
+    if isinstance(station_pairs, list):
+        cleaned = [str(station).strip() for station in station_pairs if str(station or "").strip()]
+        return ", ".join(cleaned) or None
     source_stations = filters.get("source_stations")
     if isinstance(source_stations, list):
         cleaned = [str(station).strip() for station in source_stations if str(station or "").strip()]

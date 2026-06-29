@@ -76,6 +76,23 @@ class ExcelEndpointTests(unittest.TestCase):
         report_params = build_workbook.call_args.args[0]
         self.assertEqual(report_params.source_station, "station-a, station-b")
 
+    def test_excel_report_from_summary_accepts_station_pairs_array(self):
+        with patch.object(main, "build_workbook", return_value=FakeWorkbook()) as build_workbook:
+            response = main.excel_report_from_summary(
+                {
+                    "filters": {
+                        "start_at": "2026-06-19 00:00:00",
+                        "end_at": "2026-06-26 23:59:59",
+                        "station_pairs": ["ART_ENDFORM_1859", "ART_ENDFORM_1862"],
+                    },
+                    "data": EMPTY_REJECT_SUMMARY,
+                }
+            )
+
+        self.assertEqual(response.media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        report_params = build_workbook.call_args.args[0]
+        self.assertEqual(report_params.source_station, "ART_ENDFORM_1859, ART_ENDFORM_1862")
+
     def test_excel_report_uses_default_period_when_dates_are_missing(self):
         fake_db = object()
         with patch.object(main, "default_period", return_value=(datetime(2026, 6, 19), datetime(2026, 6, 26, 23, 59, 59))):

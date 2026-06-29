@@ -101,6 +101,53 @@ SAMPLE_REJECT_SUMMARY = {
             "nok_pieces": 1,
         },
     ],
+    "combined": {
+        "stations": [
+            {
+                "station_pair": "station",
+                "source_stations": ["station-a", "station-b"],
+                "total_pieces": 8,
+                "ok_pieces": 5,
+                "nok_pieces": 3,
+                "pct_ok": 0.625,
+                "pct_nok": 0.375,
+            }
+        ],
+        "daily": [
+            {
+                "station_pair": "station",
+                "reject_date": "2026-06-26",
+                "total_pieces": 8,
+                "ok_pieces": 5,
+                "nok_pieces": 3,
+                "pct_ok": 0.625,
+                "pct_nok": 0.375,
+            }
+        ],
+        "condition_periods": [
+            {
+                "station_pair": "station",
+                "reject_date": "2026-06-26",
+                "class_name": "dent",
+                "nok_pieces": 3,
+                "ok_pieces": 0,
+                "total_pieces": 3,
+            }
+        ],
+        "condition_totals": [
+            {"station_pair": "station", "class_name": "dent", "nok_pieces": 3},
+        ],
+        "top3_history": [
+            {
+                "station_pair": "station",
+                "class_name": "dent",
+                "total_nok_pieces": 3,
+                "class_rank": 1,
+                "reject_date": "2026-06-26",
+                "nok_pieces": 3,
+            }
+        ],
+    },
 }
 
 
@@ -172,11 +219,13 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
         self.assertIn("tblPorDia", workbook["Por dia"].tables)
+        self.assertIn("tblPorDiaCombinado", workbook["Por dia"].tables)
         self.assertTrue(workbook["Per Condition"].tables)
         self.assertTrue(workbook["Top 3 Historico"].tables)
         self.assertGreaterEqual(len(workbook["Por dia"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Top 3 Historico"]._charts), 1)
+        self.assertGreaterEqual(len(workbook["Por dia"]._charts), 2)
         self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.max, 1)
 

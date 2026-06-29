@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Download, RefreshCw } from "lucide-react";
+import { ChevronDown, Download, RefreshCw, Search } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -52,8 +52,9 @@ function sameDateFilters(left, right) {
 }
 
 function stationFilterList(filters) {
-  if (Array.isArray(filters?.source_stations)) return filters.source_stations;
-  if (filters?.source_station) return [filters.source_station];
+  if (Array.isArray(filters?.station_pairs)) return filters.station_pairs;
+  if (Array.isArray(filters?.source_stations)) return filters.source_stations.map(stationPairFromStation);
+  if (filters?.source_station) return [stationPairFromStation(filters.source_station)];
   return [];
 }
 
@@ -106,6 +107,14 @@ function dateLabel(value) {
 }
 
 function stationName(value) {
+  return value || "Sin estacion";
+}
+
+function stationPairFromStation(value) {
+  return String(value || "").replace(/_(LEFT|RIGHT)$/i, "");
+}
+
+function stationPairName(value) {
   return value || "Sin estacion";
 }
 
@@ -167,11 +176,17 @@ function stationList(data) {
   return [...names].sort((a, b) => stationName(a).localeCompare(stationName(b)));
 }
 
+function stationPairOptions(options) {
+  const pairs = new Set(options?.station_pairs || []);
+  for (const station of options?.source_stations || []) pairs.add(stationPairFromStation(station));
+  return [...pairs].filter(Boolean).sort((a, b) => stationPairName(a).localeCompare(stationPairName(b)));
+}
+
 function dashboardFilters(filters) {
   return {
     start_at: toApiDateTime(filters.start_at),
     end_at: toApiDateTime(filters.end_at),
-    source_stations: stationFilterList(filters)
+    station_pairs: stationFilterList(filters)
   };
 }
 
@@ -182,18 +197,38 @@ function dateFilters(filters) {
   };
 }
 
-function filterReportData(data, sourceStations = []) {
+function filterReportData(data, stationPairs = []) {
   if (!data) return null;
-  const selectedStations = new Set(sourceStations);
-  if (!selectedStations.size) return data;
-  const filterRows = (rows = []) => rows.filter((row) => selectedStations.has(row.source_station || ""));
+  const selectedPairs = new Set(stationPairs);
+  if (!selectedPairs.size) return data;
+  const filterSideRows = (rows = []) => rows.filter((row) => selectedPairs.has(stationPairFromStation(row.source_station || "")));
+  const filterCombinedRows = (rows = []) => rows.filter((row) => selectedPairs.has(row.station_pair || ""));
   return {
     ...data,
-    stations: filterRows(data.stations),
-    daily: filterRows(data.daily),
-    condition_periods: filterRows(data.condition_periods),
-    condition_totals: filterRows(data.condition_totals),
-    top3_history: filterRows(data.top3_history)
+    stations: filterSideRows(data.stations),
+    daily: filterSideRows(data.daily),
+    condition_periods: filterSideRows(data.condition_periods),
+    condition_totals: filterSideRows(data.condition_totals),
+    top3_history: filterSideRows(data.top3_history),
+    combined: data.combined ? {
+      stations: filterCombinedRows(data.combined.stations),
+      daily: filterCombinedRows(data.combined.daily),
+      condition_periods: filterCombinedRows(data.combined.condition_periods),
+      condition_totals: filterCombinedRows(data.combined.condition_totals),
+      top3_history: filterCombinedRows(data.combined.top3_history)
+    } : undefined
+  };
+}
+
+function combinedAsStationData(data) {
+  if (!data?.combined) return null;
+  const mapRows = (rows = []) => rows.map((row) => ({ ...row, source_station: row.station_pair || row.source_station || "" }));
+  return {
+    stations: mapRows(data.combined.stations),
+    daily: mapRows(data.combined.daily),
+    condition_periods: mapRows(data.combined.condition_periods),
+    condition_totals: mapRows(data.combined.condition_totals),
+    top3_history: mapRows(data.combined.top3_history)
   };
 }
 
@@ -280,12 +315,17 @@ function Empty({ label = "Sin datos" }) {
   return <div className="empty">{label}</div>;
 }
 
-function DailyTab({ data, stations }) {
+function SectionTitle({ children }) {
+  return <h2 className="section-title">{children}</h2>;
+}
+
+function DailyTab({ data, stations, title }) {
   const rows = dailyChartRows(data, stations);
   const byStation = groupBy(data?.daily || [], "source_station");
 
   return (
     <section className="tab-panel">
+      {title ? <SectionTitle>{title}</SectionTitle> : null}
       <section className="panel">
         <div className="panel-title">Tasa de rechazo (% NOK) por dia</div>
         <div className="chart-wrap tall">
@@ -368,12 +408,13 @@ function DailyTab({ data, stations }) {
   );
 }
 
-function ConditionsTab({ data, stations, colorsByDefect }) {
+function ConditionsTab({ data, stations, colorsByDefect, title }) {
   const periodsByStation = groupBy(data?.condition_periods || [], "source_station");
   const totalsByStation = groupBy(data?.condition_totals || [], "source_station");
 
   return (
     <section className="tab-panel">
+      {title ? <SectionTitle>{title}</SectionTitle> : null}
       <section className="station-grid">
         {stations.length ? stations.map((station) => {
           const totals = conditionTotals(totalsByStation[station] || []);
@@ -446,81 +487,130 @@ function ConditionsTab({ data, stations, colorsByDefect }) {
   );
 }
 
-function Top3Tab({ data, stations, colorsByDefect }) {
+function Top3Tab({ data, stations, colorsByDefect, title }) {
   const historyByStation = groupBy(data?.top3_history || [], "source_station");
   const countAxisMax = niceAxisMax((data?.top3_history || []).map((row) => row.nok_pieces));
 
   return (
-    <section className="station-grid">
-      {stations.length ? stations.map((station) => {
-        const history = historyByStation[station] || [];
-        const classes = classNames(history);
-        const rows = topHistoryRows(history);
-        const totals = classes.map((name) => {
-          const first = history.find((row) => defectName(row.class_name) === name);
-          return {
-            class_name: name,
-            class_rank: Number(first?.class_rank || 0),
-            total_nok_pieces: Number(first?.total_nok_pieces || 0)
-          };
-        });
-        return (
-          <section className="panel station-card" key={station || "blank"}>
-            <div className="panel-title">{stationName(station)} - Top 3 NOK por dia</div>
-            <div className="chart-wrap top3">
-              {rows.length ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={rows} margin={{ top: 14, right: 20, bottom: 8, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
-                    <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
-                    <YAxis domain={[0, countAxisMax]} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(value) => numberFormat(value)} />
-                    <Legend />
-                    {classes.map((name) => (
-                      <Bar key={name} dataKey={name} name={name} fill={defectColor(colorsByDefect, name)} />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <Empty />
-              )}
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Top</th>
-                    <th>Class Name</th>
-                    <th>NOK acumulado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {totals.length ? totals.map((row, index) => (
-                    <tr key={`${station}-${row.class_name}`}>
-                      <td>{row.class_rank || index + 1}</td>
-                      <td>{row.class_name}</td>
-                      <td>{numberFormat(row.total_nok_pieces)}</td>
-                    </tr>
-                  )) : (
+    <section className="tab-panel">
+      {title ? <SectionTitle>{title}</SectionTitle> : null}
+      <section className="station-grid">
+        {stations.length ? stations.map((station) => {
+          const history = historyByStation[station] || [];
+          const classes = classNames(history);
+          const rows = topHistoryRows(history);
+          const totals = classes.map((name) => {
+            const first = history.find((row) => defectName(row.class_name) === name);
+            return {
+              class_name: name,
+              class_rank: Number(first?.class_rank || 0),
+              total_nok_pieces: Number(first?.total_nok_pieces || 0)
+            };
+          });
+          return (
+            <section className="panel station-card" key={station || "blank"}>
+              <div className="panel-title">{stationName(station)} - Top 3 NOK por dia</div>
+              <div className="chart-wrap top3">
+                {rows.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={rows} margin={{ top: 14, right: 20, bottom: 8, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
+                      <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
+                      <YAxis domain={[0, countAxisMax]} tick={{ fontSize: 11 }} />
+                      <Tooltip formatter={(value) => numberFormat(value)} />
+                      <Legend />
+                      {classes.map((name) => (
+                        <Bar key={name} dataKey={name} name={name} fill={defectColor(colorsByDefect, name)} />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <Empty />
+                )}
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan="3" className="empty-cell">Sin datos</td>
+                      <th>Top</th>
+                      <th>Class Name</th>
+                      <th>NOK acumulado</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        );
-      }) : <Empty />}
+                  </thead>
+                  <tbody>
+                    {totals.length ? totals.map((row, index) => (
+                      <tr key={`${station}-${row.class_name}`}>
+                        <td>{row.class_rank || index + 1}</td>
+                        <td>{row.class_name}</td>
+                        <td>{numberFormat(row.total_nok_pieces)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan="3" className="empty-cell">Sin datos</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        }) : <Empty />}
+      </section>
     </section>
   );
 }
 
+function StationMultiSelect({ options, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selected = new Set(value || []);
+  const filtered = options.filter((item) => stationPairName(item).toLowerCase().includes(search.trim().toLowerCase()));
+  const label = selected.size ? `${selected.size} seleccionadas` : "Todas";
+
+  function toggle(item) {
+    const next = new Set(selected);
+    if (next.has(item)) next.delete(item);
+    else next.add(item);
+    onChange([...next].sort((a, b) => stationPairName(a).localeCompare(stationPairName(b))));
+  }
+
+  return (
+    <div className="multi-select" onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+    }}>
+      <button type="button" className="multi-select-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+        <span>{label}</span>
+        <ChevronDown size={16} />
+      </button>
+      {open ? (
+        <div className="multi-select-menu">
+          <label className="search-box">
+            <Search size={15} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar estacion" />
+          </label>
+          <div className="multi-select-actions">
+            <button type="button" className="small-button" onClick={() => onChange([])}>Todas</button>
+            <button type="button" className="small-button" onClick={() => onChange(options)}>Seleccionar todas</button>
+          </div>
+          <div className="multi-select-options">
+            {filtered.length ? filtered.map((item) => (
+              <label className="check-option" key={item}>
+                <input type="checkbox" checked={selected.has(item)} onChange={() => toggle(item)} />
+                <span>{stationPairName(item)}</span>
+              </label>
+            )) : <div className="empty-option">Sin coincidencias</div>}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function App() {
-  const [options, setOptions] = useState({ source_stations: [] });
+  const [options, setOptions] = useState({ source_stations: [], station_pairs: [] });
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
-    source_stations: []
+    station_pairs: []
   }));
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [loadedData, setLoadedData] = useState(null);
@@ -540,7 +630,7 @@ function App() {
 
   const apiFilters = useMemo(() => dashboardFilters(filters), [filters]);
   const visibleData = useMemo(
-    () => filterReportData(loadedData, appliedFilters?.source_stations || []),
+    () => filterReportData(loadedData, appliedFilters?.station_pairs || []),
     [loadedData, appliedFilters]
   );
 
@@ -575,13 +665,6 @@ function App() {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
-  function updateSourceStations(event) {
-    updateFilter(
-      "source_stations",
-      Array.from(event.target.selectedOptions).map((option) => option.value)
-    );
-  }
-
   async function downloadExcel() {
     if (!visibleData || !appliedFilters || !sameFilters(apiFilters, appliedFilters)) return;
     setExporting(true);
@@ -612,11 +695,13 @@ function App() {
     }
   }
 
+  const pairOptions = useMemo(() => stationPairOptions(options), [options]);
   const stations = stationList(visibleData);
+  const combinedData = useMemo(() => combinedAsStationData(visibleData), [visibleData]);
+  const combinedStations = stationList(combinedData);
   const colorsByDefect = useMemo(() => defectColorMap(visibleData), [visibleData]);
+  const combinedColorsByDefect = useMemo(() => defectColorMap(combinedData), [combinedData]);
   const canDownloadExcel = Boolean(visibleData) && !loading && !exporting && sameFilters(apiFilters, appliedFilters);
-  const selectedStationCount = filters.source_stations.length;
-  const sourceStationLabel = selectedStationCount ? `${selectedStationCount} seleccionadas` : "Todas";
 
   return (
     <main>
@@ -646,23 +731,11 @@ function App() {
           Fin
           <input type="datetime-local" value={filters.end_at} onChange={(event) => updateFilter("end_at", event.target.value)} />
         </label>
-        <label className="station-filter">
-          <span>Source station</span>
-          <select multiple value={filters.source_stations} onChange={updateSourceStations}>
-            {(options.source_stations || []).map((station) => (
-              <option key={station} value={station}>{stationName(station)}</option>
-            ))}
-          </select>
-          <span className="filter-hint">{sourceStationLabel}</span>
-          <span className="filter-actions">
-            <button type="button" className="small-button" onClick={() => updateFilter("source_stations", [])}>
-              Todas
-            </button>
-            <button type="button" className="small-button" onClick={() => updateFilter("source_stations", options.source_stations || [])}>
-              Seleccionar todas
-            </button>
-          </span>
-        </label>
+        <div className="station-filter">
+          <span>Estacion</span>
+          <StationMultiSelect options={pairOptions} value={filters.station_pairs} onChange={(value) => updateFilter("station_pairs", value)} />
+          <span className="filter-hint">Selecciona estaciones base; cada una incluye LEFT y RIGHT.</span>
+        </div>
       </section>
 
       {error ? <div className="error">{error}</div> : null}
@@ -674,9 +747,24 @@ function App() {
         ))}
       </nav>
 
-      {visibleData && activeTab === "daily" ? <DailyTab data={visibleData} stations={stations} /> : null}
-      {visibleData && activeTab === "conditions" ? <ConditionsTab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} /> : null}
-      {visibleData && activeTab === "top3" ? <Top3Tab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} /> : null}
+      {visibleData && activeTab === "daily" ? (
+        <>
+          <DailyTab data={visibleData} stations={stations} title="Por lado" />
+          {combinedData ? <DailyTab data={combinedData} stations={combinedStations} title="Combinado LEFT+RIGHT" /> : null}
+        </>
+      ) : null}
+      {visibleData && activeTab === "conditions" ? (
+        <>
+          <ConditionsTab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} title="Por lado" />
+          {combinedData ? <ConditionsTab data={combinedData} stations={combinedStations} colorsByDefect={combinedColorsByDefect} title="Combinado LEFT+RIGHT" /> : null}
+        </>
+      ) : null}
+      {visibleData && activeTab === "top3" ? (
+        <>
+          <Top3Tab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} title="Por lado" />
+          {combinedData ? <Top3Tab data={combinedData} stations={combinedStations} colorsByDefect={combinedColorsByDefect} title="Combinado LEFT+RIGHT" /> : null}
+        </>
+      ) : null}
       {!visibleData && !loading ? <Empty label="Sin datos cargados" /> : null}
     </main>
   );

@@ -93,6 +93,17 @@ label {
   text-transform: uppercase;
 }
 
+.station-filter {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  color: #4e5661;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 input,
 select {
   width: 100%;
@@ -103,15 +114,6 @@ select {
   background: #ffffff;
   color: #22262a;
   font: inherit;
-}
-
-select[multiple] {
-  min-height: 94px;
-  padding: 5px;
-}
-
-.station-filter {
-  align-content: start;
 }
 
 .filter-hint {
@@ -131,6 +133,97 @@ select[multiple] {
   min-height: 30px;
   padding: 5px 9px;
   font-size: 12px;
+}
+
+.multi-select {
+  position: relative;
+}
+
+.multi-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  justify-content: space-between;
+  border-color: #b9c2cc;
+  padding: 7px 9px;
+  font-weight: 650;
+}
+
+.multi-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #b9c2cc;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(32, 38, 46, 0.16);
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid #c7d0d9;
+  border-radius: 5px;
+  color: #69717c;
+  text-transform: none;
+}
+
+.search-box input {
+  min-height: 30px;
+  border: 0;
+  padding: 0;
+  outline: 0;
+}
+
+.multi-select-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.multi-select-options {
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.check-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 6px;
+  border-radius: 5px;
+  color: #30353b;
+  font-size: 13px;
+  font-weight: 650;
+  text-transform: none;
+}
+
+.check-option:hover {
+  background: #edf2f7;
+}
+
+.check-option input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.empty-option {
+  padding: 10px 6px;
+  color: #747d87;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: center;
+  text-transform: none;
 }
 
 .error,
@@ -174,6 +267,13 @@ select[multiple] {
 .station-grid {
   display: grid;
   gap: 12px;
+}
+
+.section-title {
+  margin: 6px 0 0;
+  color: #30353b;
+  font-size: 18px;
+  font-weight: 760;
 }
 
 .station-grid {

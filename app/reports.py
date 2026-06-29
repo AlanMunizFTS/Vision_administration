@@ -23,6 +23,10 @@ def defect_name_expr(column_name):
     return f"COALESCE(NULLIF(UPPER(TRIM({column_name})), ''), 'UNCLASSIFIED')"
 
 
+def station_pair_expr(column_name="source_station"):
+    return f"regexp_replace({column_name}, '_(LEFT|RIGHT)$', '', 'i')"
+
+
 def normalize_value(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -112,6 +116,32 @@ def build_piece_filters(start_at=None, end_at=None, source_station=None, source_
     return where_sql, params
 
 
+def build_combined_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None):
+    filters = []
+    params = []
+
+    parsed_start = parse_datetime_param(start_at, "start_at")
+    parsed_end = parse_datetime_param(end_at, "end_at")
+
+    if parsed_start is not None:
+        filters.append("captured_at >= %s")
+        params.append(parsed_start)
+    if parsed_end is not None:
+        filters.append("captured_at <= %s")
+        params.append(parsed_end)
+    if source_station:
+        filters.append("(%s = ANY(source_stations) OR station_pair = %s)")
+        params.extend([source_station, source_station])
+    if source_id is not None:
+        filters.append("%s = ANY(source_ids)")
+        params.append(source_id)
+
+    where_sql = ""
+    if filters:
+        where_sql = "WHERE " + " AND ".join(f"({item})" for item in filters)
+    return where_sql, params
+
+
 def piece_cte():
     return f"""
 WITH raw AS (
@@ -166,6 +196,61 @@ pieces AS (
 """
 
 
+def combined_piece_cte():
+    return f"""
+{piece_cte()},
+combined_ranked_defects AS (
+    SELECT
+        {station_pair_expr("source_station")} AS station_pair,
+        jsn,
+        main_defect,
+        main_confidence,
+        ROW_NUMBER() OVER (
+            PARTITION BY {station_pair_expr("source_station")}, jsn
+            ORDER BY main_confidence DESC NULLS LAST, created_at_last DESC NULLS LAST, source_station DESC NULLS LAST
+        ) AS defect_rank
+    FROM pieces
+    WHERE model_result = 'NOK'
+),
+combined_base AS (
+    SELECT
+        {station_pair_expr("pieces.source_station")} AS station_pair,
+        pieces.jsn,
+        CASE
+            WHEN COUNT(*) FILTER (WHERE pieces.model_result = 'NOK') > 0 THEN 'NOK'
+            ELSE 'OK'
+        END AS model_result,
+        MIN(pieces.captured_at) AS captured_at,
+        MIN(pieces.created_at_first) AS created_at_first,
+        MAX(pieces.created_at_last) AS created_at_last,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT pieces.source_station ORDER BY pieces.source_station), NULL) AS source_stations,
+        SUM(pieces.image_count) AS image_count,
+        SUM(pieces.detections_count) AS detections_count,
+        selected.main_defect,
+        selected.main_confidence
+    FROM pieces
+    LEFT JOIN combined_ranked_defects selected
+      ON selected.station_pair IS NOT DISTINCT FROM {station_pair_expr("pieces.source_station")}
+     AND selected.jsn = pieces.jsn
+     AND selected.defect_rank = 1
+    GROUP BY {station_pair_expr("pieces.source_station")}, pieces.jsn, selected.main_defect, selected.main_confidence
+),
+combined_pieces AS (
+    SELECT
+        combined_base.*,
+        ARRAY(
+            SELECT DISTINCT source_id
+            FROM pieces source_piece
+            CROSS JOIN LATERAL unnest(source_piece.source_ids) AS source_id
+            WHERE {station_pair_expr("source_piece.source_station")} IS NOT DISTINCT FROM combined_base.station_pair
+              AND source_piece.jsn = combined_base.jsn
+            ORDER BY source_id
+        ) AS source_ids
+    FROM combined_base
+)
+"""
+
+
 def get_health(db):
     row = db.fetch_one("SELECT 1 AS ok")
     return {"api": "ok", "database": "ok" if row and row.get("ok") == 1 else "error"}
@@ -175,6 +260,7 @@ def get_options(db):
     query = f"""
     SELECT
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT source_station ORDER BY source_station), NULL) AS source_stations,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT {station_pair_expr()} ORDER BY {station_pair_expr()}), NULL) AS station_pairs,
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT class_name ORDER BY class_name), NULL) AS class_names,
         MIN({CAPTURED_AT_EXPR}) AS min_captured_at,
         MAX({CAPTURED_AT_EXPR}) AS max_captured_at,
@@ -415,6 +501,12 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         source_station=source_station,
         source_id=source_id,
     )
+    combined_where_sql, combined_params = build_combined_piece_filters(
+        start_at=start_at,
+        end_at=end_at,
+        source_station=source_station,
+        source_id=source_id,
+    )
     filtered_sql = f"""
     {piece_cte()},
     filtered_pieces AS (
@@ -544,10 +636,158 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
     ORDER BY filtered_pieces.source_station ASC NULLS LAST, ranked_classes.class_rank ASC, reject_date ASC
     """
 
+    combined_filtered_sql = f"""
+    {combined_piece_cte()},
+    filtered_combined_pieces AS (
+        SELECT
+            station_pair,
+            jsn,
+            model_result,
+            captured_at,
+            source_stations,
+            {defect_name_expr("main_defect")} AS condition_name
+        FROM combined_pieces
+        {combined_where_sql}
+    )
+    """
+
+    combined_stations_query = f"""
+    {combined_filtered_sql},
+    station_sides AS (
+        SELECT
+            station_pair,
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT side_station ORDER BY side_station), NULL) AS source_stations
+        FROM filtered_combined_pieces
+        LEFT JOIN LATERAL unnest(source_stations) AS side_station ON true
+        GROUP BY station_pair
+    )
+    SELECT
+        filtered_combined_pieces.station_pair,
+        station_sides.source_stations,
+        COUNT(*) AS total_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'OK')::float / COUNT(*) END AS pct_ok,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'NOK')::float / COUNT(*) END AS pct_nok
+    FROM filtered_combined_pieces
+    LEFT JOIN station_sides
+      ON station_sides.station_pair IS NOT DISTINCT FROM filtered_combined_pieces.station_pair
+    GROUP BY filtered_combined_pieces.station_pair, station_sides.source_stations
+    ORDER BY filtered_combined_pieces.station_pair ASC NULLS LAST
+    """
+
+    combined_daily_query = f"""
+    {combined_filtered_sql}
+    SELECT
+        station_pair,
+        date_trunc('day', captured_at)::date AS reject_date,
+        COUNT(*) AS total_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'OK')::float / COUNT(*) END AS pct_ok,
+        CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'NOK')::float / COUNT(*) END AS pct_nok
+    FROM filtered_combined_pieces
+    WHERE captured_at IS NOT NULL
+    GROUP BY station_pair, date_trunc('day', captured_at)::date
+    ORDER BY reject_date ASC, station_pair ASC NULLS LAST
+    """
+
+    combined_condition_periods_query = f"""
+    {combined_filtered_sql},
+    day_bounds AS (
+        SELECT
+            station_pair,
+            date_trunc('day', captured_at)::date AS reject_date,
+            MIN(captured_at) AS period_start,
+            MAX(captured_at) AS period_end
+        FROM filtered_combined_pieces
+        WHERE captured_at IS NOT NULL
+        GROUP BY station_pair, date_trunc('day', captured_at)::date
+    )
+    SELECT
+        filtered_combined_pieces.station_pair,
+        date_trunc('day', filtered_combined_pieces.captured_at)::date AS reject_date,
+        day_bounds.period_start,
+        day_bounds.period_end,
+        CASE WHEN model_result = 'OK' THEN 'OK' ELSE condition_name END AS class_name,
+        COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+        COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+        COUNT(*) AS total_pieces
+    FROM filtered_combined_pieces
+    INNER JOIN day_bounds
+      ON day_bounds.station_pair IS NOT DISTINCT FROM filtered_combined_pieces.station_pair
+     AND day_bounds.reject_date = date_trunc('day', filtered_combined_pieces.captured_at)::date
+    WHERE filtered_combined_pieces.captured_at IS NOT NULL
+    GROUP BY
+        filtered_combined_pieces.station_pair,
+        date_trunc('day', filtered_combined_pieces.captured_at)::date,
+        day_bounds.period_start,
+        day_bounds.period_end,
+        CASE WHEN model_result = 'OK' THEN 'OK' ELSE condition_name END
+    ORDER BY reject_date ASC, station_pair ASC NULLS LAST, class_name ASC
+    """
+
+    combined_condition_totals_query = f"""
+    {combined_filtered_sql}
+    SELECT
+        station_pair,
+        condition_name AS class_name,
+        COUNT(*) AS nok_pieces
+    FROM filtered_combined_pieces
+    WHERE model_result = 'NOK'
+    GROUP BY station_pair, condition_name
+    ORDER BY station_pair ASC NULLS LAST, class_name ASC
+    """
+
+    combined_top3_history_query = f"""
+    {combined_filtered_sql},
+    ranked_classes AS (
+        SELECT
+            station_pair,
+            condition_name AS class_name,
+            COUNT(*) AS nok_pieces,
+            ROW_NUMBER() OVER (
+                PARTITION BY station_pair
+                ORDER BY COUNT(*) DESC, condition_name ASC
+            ) AS class_rank
+        FROM filtered_combined_pieces
+        WHERE model_result = 'NOK'
+        GROUP BY station_pair, condition_name
+    )
+    SELECT
+        filtered_combined_pieces.station_pair,
+        ranked_classes.class_name,
+        ranked_classes.nok_pieces AS total_nok_pieces,
+        ranked_classes.class_rank,
+        date_trunc('day', filtered_combined_pieces.captured_at)::date AS reject_date,
+        COUNT(*) AS nok_pieces
+    FROM filtered_combined_pieces
+    INNER JOIN ranked_classes
+      ON ranked_classes.station_pair IS NOT DISTINCT FROM filtered_combined_pieces.station_pair
+     AND ranked_classes.class_name = filtered_combined_pieces.condition_name
+     AND ranked_classes.class_rank <= 3
+    WHERE filtered_combined_pieces.model_result = 'NOK'
+      AND filtered_combined_pieces.captured_at IS NOT NULL
+    GROUP BY
+        filtered_combined_pieces.station_pair,
+        ranked_classes.class_name,
+        ranked_classes.nok_pieces,
+        ranked_classes.class_rank,
+        date_trunc('day', filtered_combined_pieces.captured_at)::date
+    ORDER BY filtered_combined_pieces.station_pair ASC NULLS LAST, ranked_classes.class_rank ASC, reject_date ASC
+    """
+
     return {
         "stations": [normalize_row(row) for row in db.fetch(stations_query, params)],
         "daily": [normalize_row(row) for row in db.fetch(daily_query, params)],
         "condition_periods": [normalize_row(row) for row in db.fetch(condition_periods_query, params)],
         "condition_totals": [normalize_row(row) for row in db.fetch(condition_totals_query, params)],
         "top3_history": [normalize_row(row) for row in db.fetch(top3_history_query, params)],
+        "combined": {
+            "stations": [normalize_row(row) for row in db.fetch(combined_stations_query, combined_params)],
+            "daily": [normalize_row(row) for row in db.fetch(combined_daily_query, combined_params)],
+            "condition_periods": [normalize_row(row) for row in db.fetch(combined_condition_periods_query, combined_params)],
+            "condition_totals": [normalize_row(row) for row in db.fetch(combined_condition_totals_query, combined_params)],
+            "top3_history": [normalize_row(row) for row in db.fetch(combined_top3_history_query, combined_params)],
+        },
     }
