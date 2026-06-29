@@ -22,6 +22,10 @@ class SequencedDb:
         self.calls.append((query, params or []))
         return self.responses[len(self.calls) - 1]
 
+    def fetch_one(self, query, params=None):
+        self.calls.append((query, params or []))
+        return self.responses[len(self.calls) - 1]
+
 
 class ReportsTests(unittest.TestCase):
     def test_piece_cte_partitions_by_station_and_jsn(self):
@@ -85,16 +89,20 @@ class ReportsTests(unittest.TestCase):
     def test_reject_summary_returns_excel_shaped_collections(self):
         db = SequencedDb(
             [
-                [{"source_station": "Tesla 1 - Left", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
-                [{"source_station": "Tesla 1 - Left", "reject_date": "2026-06-01", "pct_nok": 0.3}],
-                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
-                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
-                [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
-                [{"station_pair": "Tesla 1", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
-                [{"station_pair": "Tesla 1", "reject_date": "2026-06-01", "pct_nok": 0.3}],
-                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
-                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
-                [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
+                {
+                    "stations": [{"source_station": "Tesla 1 - Left", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
+                    "daily": [{"source_station": "Tesla 1 - Left", "reject_date": "2026-06-01", "pct_nok": 0.3}],
+                    "condition_periods": [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
+                    "condition_totals": [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "nok_pieces": 3}],
+                    "top3_history": [{"source_station": "Tesla 1 - Left", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
+                    "combined": {
+                        "stations": [{"station_pair": "Tesla 1", "total_pieces": 10, "ok_pieces": 7, "nok_pieces": 3}],
+                        "daily": [{"station_pair": "Tesla 1", "reject_date": "2026-06-01", "pct_nok": 0.3}],
+                        "condition_periods": [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
+                        "condition_totals": [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "nok_pieces": 3}],
+                        "top3_history": [{"station_pair": "Tesla 1", "class_name": "WRINKLE", "reject_date": "2026-06-01"}],
+                    },
+                }
             ]
         )
 
@@ -103,20 +111,17 @@ class ReportsTests(unittest.TestCase):
         self.assertEqual(set(result), {"stations", "daily", "condition_periods", "condition_totals", "top3_history", "combined"})
         self.assertEqual(result["stations"][0]["source_station"], "Tesla 1 - Left")
         self.assertEqual(result["combined"]["stations"][0]["station_pair"], "Tesla 1")
-        self.assertEqual(len(db.calls), 10)
-        for _, params in db.calls[:5]:
-            self.assertEqual(params, ["Tesla 1 - Left"])
-        for _, params in db.calls[5:]:
-            self.assertEqual(params, ["Tesla 1 - Left", "Tesla 1 - Left"])
+        self.assertEqual(len(db.calls), 1)
+        self.assertEqual(db.calls[0][1], ["Tesla 1 - Left"])
 
     def test_reject_summary_groups_by_day_station_and_top3_class(self):
-        db = SequencedDb([[], [], [], [], [], [], [], [], [], []])
+        db = SequencedDb([{}])
 
         reports.get_reject_summary(db)
 
-        daily_query = db.calls[1][0]
-        condition_query = db.calls[2][0]
-        top3_query = db.calls[4][0]
+        daily_query = db.calls[0][0]
+        condition_query = db.calls[0][0]
+        top3_query = db.calls[0][0]
         self.assertIn("date_trunc('day', captured_at)::date", daily_query)
         self.assertIn("GROUP BY source_station, date_trunc('day', captured_at)::date", daily_query)
         self.assertIn("day_bounds", condition_query)
@@ -139,12 +144,12 @@ class ReportsTests(unittest.TestCase):
         self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", station_defects_query)
 
     def test_reject_summary_uses_canonical_condition_names_and_alpha_condition_order(self):
-        db = SequencedDb([[], [], [], [], [], [], [], [], [], []])
+        db = SequencedDb([{}])
 
         reports.get_reject_summary(db)
 
-        filtered_query = db.calls[2][0]
-        totals_query = db.calls[3][0]
+        filtered_query = db.calls[0][0]
+        totals_query = db.calls[0][0]
         self.assertIn("COALESCE(NULLIF(UPPER(TRIM(main_defect)), ''), 'UNCLASSIFIED') AS condition_name", filtered_query)
         self.assertIn("ORDER BY reject_date ASC, source_station ASC NULLS LAST, class_name ASC", filtered_query)
         self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", totals_query)
