@@ -8,8 +8,10 @@ import requests
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, PieChart, Reference
 from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.series import SeriesLabel
 from openpyxl.chart.shapes import GraphicalProperties
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.formatting.rule import ColorScaleRule, FormulaRule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -185,7 +187,7 @@ def _style_header(sheet, row_idx, min_col=1, max_col=None):
 
 def _fit_columns(sheet, max_width=42):
     for column_cells in sheet.columns:
-        column_letter = column_cells[0].column_letter
+        column_letter = get_column_letter(column_cells[0].column)
         width = max(len(str(cell.value or "")) for cell in column_cells)
         sheet.column_dimensions[column_letter].width = min(max(width + 2, 12), max_width)
 
@@ -317,65 +319,210 @@ def _format_percentage_columns(sheet, columns, start_row=2):
             sheet.cell(row=row_idx, column=col_idx).number_format = "0.0%"
 
 
+DAILY_METRICS = ("OK", "NOK", "Total", "% OK", "% NOK")
+DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combinado")
+
+
+def _split_station_side(value):
+    text = _station_name(value).strip()
+    match = re.search(r"(?:\s*-\s*|_)(LEFT|RIGHT)$", text, re.IGNORECASE)
+    if not match:
+        return text, ""
+
+    base = text[: match.start()].strip(" _-")
+    side = match.group(1).upper()
+    return base or text, "Left" if side == "LEFT" else "Right"
+
+
+def _daily_block_value(row):
+    if not row:
+        return ["", "", "", "", ""]
+    return [
+        _normalize_int(row.get("ok_pieces")),
+        _normalize_int(row.get("nok_pieces")),
+        _normalize_int(row.get("total_pieces")),
+        _normalize_number(row.get("pct_ok")),
+        _normalize_number(row.get("pct_nok")),
+    ]
+
+
+def _daily_layout(data):
+    daily_rows = data.get("daily") or []
+    combined_rows = ((data.get("combined") or {}).get("daily")) or []
+    groups = {}
+    by_block_date = {}
+    dates = set()
+
+    for row in daily_rows:
+        day = _date_label(row.get("reject_date"))
+        if not day:
+            continue
+        base, side = _split_station_side(row.get("source_station") or "")
+        if not base:
+            continue
+        block = side or _station_name(row.get("source_station"))
+        dates.add(day)
+        groups.setdefault(base, {"blocks": set(), "has_standard_side": False})
+        groups[base]["blocks"].add(block)
+        groups[base]["has_standard_side"] = groups[base]["has_standard_side"] or block in {"Left", "Right"}
+        by_block_date[(base, block, day)] = row
+
+    for row in combined_rows:
+        day = _date_label(row.get("reject_date"))
+        if not day:
+            continue
+        base = row.get("station_pair") or _split_station_side(row.get("source_station") or "")[0]
+        base = _station_name(base).strip()
+        if not base:
+            continue
+        dates.add(day)
+        groups.setdefault(base, {"blocks": set(), "has_standard_side": False})
+        groups[base]["blocks"].add("Combinado")
+        by_block_date[(base, "Combinado", day)] = row
+
+    ordered_groups = []
+    for base in sorted(groups, key=_station_name):
+        info = groups[base]
+        if info["has_standard_side"] or "Combinado" in info["blocks"]:
+            blocks = [block for block in DAILY_STANDARD_BLOCKS if block in info["blocks"] or block != "Combinado"]
+            if "Combinado" not in blocks:
+                blocks.append("Combinado")
+        else:
+            blocks = sorted(info["blocks"], key=_station_name)
+        ordered_groups.append((base, blocks))
+
+    return sorted(dates), ordered_groups, by_block_date
+
+
+def _apply_daily_border(sheet, min_row, max_row, min_col, max_col):
+    thin = Side(style="thin", color="000000")
+    for row_idx in range(min_row, max_row + 1):
+        for col_idx in range(min_col, max_col + 1):
+            cell = sheet.cell(row=row_idx, column=col_idx)
+            left = thin if col_idx == min_col else cell.border.left
+            right = thin if col_idx == max_col else cell.border.right
+            top = thin if row_idx == min_row else cell.border.top
+            bottom = thin if row_idx == max_row else cell.border.bottom
+            cell.border = Border(left=left, right=right, top=top, bottom=bottom)
+
+
 def _write_daily_sheet(workbook, data):
     sheet = workbook.active
     sheet.title = "Por dia"
-    stations = _station_list(data)
-    daily_rows = data.get("daily") or []
-    dates = sorted({_date_label(row.get("reject_date")) for row in daily_rows if _date_label(row.get("reject_date"))})
-    by_station_date = {
-        (row.get("source_station") or "", _date_label(row.get("reject_date"))): row
-        for row in daily_rows
-    }
+    dates, groups, by_block_date = _daily_layout(data)
+    header_fill = PatternFill(fill_type="solid", fgColor="404040")
+    header_font = Font(color="FFFFFF", bold=True)
+    stripe_fill = PatternFill(fill_type="solid", fgColor="F2F2F2")
+    percent_cols = []
+    nok_percent_cols = []
+    series_cols = []
 
-    headers = ["Fecha"]
-    for station in stations:
-        label = _station_name(station)
-        headers.extend([f"{label} OK", f"{label} NOK", f"{label} Total", f"{label} % OK", f"{label} % NOK"])
+    sheet.cell(row=3, column=1, value="Date")
+    sheet.cell(row=3, column=1).fill = header_fill
+    sheet.cell(row=3, column=1).font = header_font
+    sheet.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    _apply_daily_border(sheet, 1, 3, 1, 1)
 
-    rows = []
-    for day in dates:
-        output = [day]
-        for station in stations:
-            row = by_station_date.get((station, day))
-            if row:
-                output.extend(
-                    [
-                        _normalize_int(row.get("ok_pieces")),
-                        _normalize_int(row.get("nok_pieces")),
-                        _normalize_int(row.get("total_pieces")),
-                        _normalize_number(row.get("pct_ok")),
-                        _normalize_number(row.get("pct_nok")),
-                    ]
-                )
-            else:
-                output.extend([0, 0, 0, "", ""])
-        rows.append(output)
+    col_idx = 2
+    for base, blocks in groups:
+        base_start_col = col_idx
+        for block in blocks:
+            block_start_col = col_idx
+            block_end_col = col_idx + len(DAILY_METRICS) - 1
+            sheet.merge_cells(start_row=2, start_column=block_start_col, end_row=2, end_column=block_end_col)
+            sheet.cell(row=2, column=block_start_col, value=block)
+            sheet.cell(row=2, column=block_start_col).alignment = Alignment(horizontal="center", vertical="center")
 
-    if not headers[1:]:
-        headers = ["Fecha", "Sin datos"]
-    header_row, max_row, _ = _append_table(sheet, "tblPorDia", headers, rows)
-    percent_cols = [5 + (idx * 5) for idx in range(len(stations))]
-    percent_cols.extend([6 + (idx * 5) for idx in range(len(stations))])
-    _format_percentage_columns(sheet, percent_cols, start_row=header_row + 1)
-    sheet.freeze_panes = "A2"
+            for metric_offset, metric in enumerate(DAILY_METRICS):
+                metric_col = block_start_col + metric_offset
+                cell = sheet.cell(row=3, column=metric_col, value=metric)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if metric.startswith("%"):
+                    percent_cols.append(metric_col)
+                if metric == "% NOK":
+                    nok_percent_cols.append(metric_col)
+                    series_cols.append((base, block, metric_col))
 
-    if rows and stations:
+            _apply_daily_border(sheet, 2, 3, block_start_col, block_end_col)
+            col_idx = block_end_col + 1
+
+        base_end_col = col_idx - 1
+        sheet.merge_cells(start_row=1, start_column=base_start_col, end_row=1, end_column=base_end_col)
+        sheet.cell(row=1, column=base_start_col, value=base)
+        sheet.cell(row=1, column=base_start_col).alignment = Alignment(horizontal="center", vertical="center")
+        _apply_daily_border(sheet, 1, 1, base_start_col, base_end_col)
+
+    data_start_row = 4
+    for row_idx, day in enumerate(dates, start=data_start_row):
+        sheet.cell(row=row_idx, column=1, value=day)
+        sheet.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        col_idx = 2
+        for base, blocks in groups:
+            for block in blocks:
+                row = by_block_date.get((base, block, day))
+                for offset, value in enumerate(_daily_block_value(row)):
+                    cell = sheet.cell(row=row_idx, column=col_idx + offset, value=value)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                col_idx += len(DAILY_METRICS)
+
+    data_end_row = data_start_row + len(dates) - 1
+    max_col = max(col_idx - 1, 1)
+    sheet.freeze_panes = "A4"
+
+    if dates:
+        for col in percent_cols:
+            for row_idx in range(data_start_row, data_end_row + 1):
+                sheet.cell(row=row_idx, column=col).number_format = "0.00%"
+        for col in nok_percent_cols:
+            avg_cell = sheet.cell(row=data_end_row + 1, column=col)
+            letter = get_column_letter(col)
+            avg_cell.value = f"=AVERAGE({letter}{data_start_row}:{letter}{data_end_row})"
+            avg_cell.number_format = "0.00%"
+            avg_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        sheet.conditional_formatting.add(
+            f"A{data_start_row}:{get_column_letter(max_col)}{data_end_row}",
+            FormulaRule(formula=["ISEVEN(ROW())"], fill=stripe_fill),
+        )
+        for col in nok_percent_cols:
+            letter = get_column_letter(col)
+            sheet.conditional_formatting.add(
+                f"{letter}{data_start_row}:{letter}{data_end_row}",
+                ColorScaleRule(
+                    start_type="min",
+                    start_color="63BE7B",
+                    mid_type="percentile",
+                    mid_value=50,
+                    mid_color="FFEB84",
+                    end_type="max",
+                    end_color="F8696B",
+                ),
+            )
+        _apply_daily_border(sheet, data_start_row, data_end_row, 1, max_col)
+
+    if not groups:
+        sheet.cell(row=data_start_row, column=1, value="Sin datos")
+        _fit_columns(sheet)
+        return sheet
+
+    if dates and series_cols:
         chart = LineChart()
         chart.title = "Tasa de rechazo (% NOK) por dia"
         chart.y_axis.title = "% NOK"
         chart.x_axis.title = "Fecha"
         chart.y_axis.scaling.min = 0
         chart.y_axis.scaling.max = 1
-        chart.height = 9
-        chart.width = 18
-        categories = Reference(sheet, min_col=1, min_row=header_row + 1, max_row=max_row)
-        for idx, _station in enumerate(stations):
-            col_idx = 6 + (idx * 5)
-            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=header_row, max_row=max_row)
+        chart.height = 7.5
+        chart.width = 15
+        categories = Reference(sheet, min_col=1, min_row=data_start_row, max_row=data_end_row)
+        for base, block, col_idx in series_cols:
+            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=3, max_row=data_end_row)
             chart.add_data(values, titles_from_data=True)
+            chart.series[-1].tx = SeriesLabel(v=f"{base} - {block}")
         chart.set_categories(categories)
-        sheet.add_chart(chart, f"{get_column_letter(len(headers) + 2)}2")
+        sheet.add_chart(chart, f"A{data_end_row + 3}")
 
     _fit_columns(sheet)
     return sheet
@@ -758,7 +905,6 @@ def build_workbook(report_params, data):
     colors_by_defect = _defect_color_map(data)
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     daily_sheet = _write_daily_sheet(workbook, data)
-    _append_combined_daily_section(daily_sheet, data)
     _fit_columns(daily_sheet)
     conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect)
     _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect)

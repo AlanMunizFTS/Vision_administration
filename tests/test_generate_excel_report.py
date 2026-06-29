@@ -29,7 +29,7 @@ SAMPLE_REJECT_SUMMARY = {
     ],
     "daily": [
         {
-            "source_station": "station-a",
+            "source_station": "station-a_LEFT",
             "reject_date": "2026-06-25",
             "total_pieces": 4,
             "ok_pieces": 3,
@@ -38,13 +38,22 @@ SAMPLE_REJECT_SUMMARY = {
             "pct_nok": 0.25,
         },
         {
-            "source_station": "station-a",
+            "source_station": "station-a_LEFT",
             "reject_date": "2026-06-26",
             "total_pieces": 6,
             "ok_pieces": 4,
             "nok_pieces": 2,
             "pct_ok": 0.667,
             "pct_nok": 0.333,
+        },
+        {
+            "source_station": "station-a_RIGHT",
+            "reject_date": "2026-06-26",
+            "total_pieces": 5,
+            "ok_pieces": 2,
+            "nok_pieces": 3,
+            "pct_ok": 0.4,
+            "pct_nok": 0.6,
         },
     ],
     "condition_periods": [
@@ -106,8 +115,8 @@ SAMPLE_REJECT_SUMMARY = {
     "combined": {
         "stations": [
             {
-                "station_pair": "station",
-                "source_stations": ["station-a", "station-b"],
+                "station_pair": "station-a",
+                "source_stations": ["station-a_LEFT", "station-a_RIGHT"],
                 "total_pieces": 8,
                 "ok_pieces": 5,
                 "nok_pieces": 3,
@@ -117,7 +126,7 @@ SAMPLE_REJECT_SUMMARY = {
         ],
         "daily": [
             {
-                "station_pair": "station",
+                "station_pair": "station-a",
                 "reject_date": "2026-06-26",
                 "total_pieces": 8,
                 "ok_pieces": 5,
@@ -218,18 +227,39 @@ class GenerateExcelReportTests(unittest.TestCase):
 
     def test_build_workbook_creates_frontend_sheets_tables_and_charts(self):
         workbook = build_workbook(self.make_params(), SAMPLE_REJECT_SUMMARY)
+        daily = workbook["Por dia"]
 
         self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
-        self.assertIn("tblPorDia", workbook["Por dia"].tables)
-        self.assertIn("tblPorDiaCombinado", workbook["Por dia"].tables)
+        self.assertEqual(daily.tables, {})
         self.assertTrue(workbook["Per Condition"].tables)
         self.assertTrue(workbook["Top 3 Historico"].tables)
-        self.assertGreaterEqual(len(workbook["Por dia"]._charts), 1)
+        self.assertEqual(daily.freeze_panes, "A4")
+        self.assertIn("B1:P1", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("B2:F2", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("G2:K2", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("L2:P2", [str(item) for item in daily.merged_cells.ranges])
+        self.assertEqual(daily["B1"].value, "station-a")
+        self.assertEqual(daily["B2"].value, "Left")
+        self.assertEqual(daily["G2"].value, "Right")
+        self.assertEqual(daily["L2"].value, "Combinado")
+        self.assertEqual([daily.cell(row=3, column=col).value for col in range(1, 7)], ["Date", "OK", "NOK", "Total", "% OK", "% NOK"])
+        self.assertEqual(daily["A4"].value, "2026-06-25")
+        self.assertEqual(daily["B4"].value, 3)
+        self.assertEqual(daily["G4"].value, "")
+        self.assertEqual(daily["L5"].value, 5)
+        self.assertEqual(daily["P5"].value, 0.375)
+        self.assertEqual(daily["F5"].number_format, "0.00%")
+        self.assertEqual(daily["K5"].number_format, "0.00%")
+        self.assertEqual(daily["P5"].number_format, "0.00%")
+        self.assertEqual(daily["F6"].value, "=AVERAGE(F4:F5)")
+        self.assertEqual(daily["K6"].value, "=AVERAGE(K4:K5)")
+        self.assertEqual(daily["P6"].value, "=AVERAGE(P4:P5)")
+        self.assertGreaterEqual(len(daily.conditional_formatting), 4)
+        self.assertEqual(len(daily._charts), 1)
         self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Top 3 Historico"]._charts), 1)
-        self.assertGreaterEqual(len(workbook["Por dia"]._charts), 2)
-        self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.min, 0)
-        self.assertEqual(workbook["Por dia"]._charts[0].y_axis.scaling.max, 1)
+        self.assertEqual(daily._charts[0].y_axis.scaling.min, 0)
+        self.assertEqual(daily._charts[0].y_axis.scaling.max, 1)
 
     def test_build_workbook_uppercases_and_alpha_sorts_defect_names(self):
         workbook = build_workbook(self.make_params(), SAMPLE_REJECT_SUMMARY)
@@ -298,7 +328,7 @@ class GenerateExcelReportTests(unittest.TestCase):
             self.assertTrue(Path(output_path).exists())
             workbook = load_workbook(output_path)
             self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
-            self.assertEqual(workbook["Por dia"]["A2"].value, "2026-06-25")
+            self.assertEqual(workbook["Por dia"]["A4"].value, "2026-06-25")
 
     def test_empty_data_still_creates_workbook(self):
         params = self.make_params()
@@ -313,8 +343,9 @@ class GenerateExcelReportTests(unittest.TestCase):
         workbook = build_workbook(params, data)
 
         self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
-        self.assertEqual(workbook["Por dia"]["A2"].value, "Sin datos")
-        self.assertTrue(workbook["Por dia"].tables)
+        self.assertEqual(workbook["Por dia"]["A4"].value, "Sin datos")
+        self.assertEqual(workbook["Por dia"].tables, {})
+        self.assertEqual(workbook["Por dia"].freeze_panes, "A4")
         self.assertTrue(workbook["Per Condition"].tables)
         self.assertTrue(workbook["Top 3 Historico"].tables)
 
