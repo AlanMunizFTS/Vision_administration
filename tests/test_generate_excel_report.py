@@ -273,11 +273,15 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(conditions["C5"].value, "=SUM(C3:C4)")
         self.assertEqual(conditions._charts[0].series[0].val.numRef.f, "'Per Condition'!$B$5:$C$5")
         self.assertEqual(conditions._charts[0].series[0].cat.numRef.f, "'Per Condition'!$B$2:$C$2")
-        self.assertEqual(top3["B3"].value, "DENT")
-        self.assertEqual(top3["B4"].value, "SCRATCH")
-        self.assertEqual(top3["B6"].value, "DENT")
-        self.assertEqual(top3["C6"].value, "SCRATCH")
-        self.assertEqual(top3["B7"].value, "")
+        self.assertEqual(top3["B3"].value, "SCRATCH")
+        self.assertEqual(top3["B4"].value, "DENT")
+        self.assertNotIn("tblTop3History1", top3.tables)
+        self.assertEqual(top3._charts[0].series[0].val.numRef.f, "'Per Condition'!$C$3:$C$4")
+        self.assertEqual(top3._charts[0].series[1].val.numRef.f, "'Per Condition'!$B$3:$B$4")
+        self.assertEqual(top3._charts[0].series[0].cat.numRef.f, "'Per Condition'!$A$3:$A$4")
+        self.assertEqual(top3._charts[0].x_axis.tickLblPos, "low")
+        self.assertEqual(top3._charts[0].y_axis.tickLblPos, "nextTo")
+        self.assertEqual(top3._charts[0].y_axis.numFmt.formatCode, "0")
         self.assertEqual(top3._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(top3._charts[0].y_axis.scaling.max, 1)
         condition_colors = [
@@ -288,7 +292,7 @@ class GenerateExcelReportTests(unittest.TestCase):
             series.graphicalProperties.solidFill.srgbClr
             for series in top3._charts[0].series
         ]
-        self.assertEqual(condition_colors, top3_colors)
+        self.assertEqual(top3_colors, [condition_colors[1], condition_colors[0]])
 
     def test_combined_sections_use_frontend_independent_color_map(self):
         data = deepcopy(SAMPLE_REJECT_SUMMARY)
