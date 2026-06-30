@@ -266,10 +266,13 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         conditions = workbook["Per Condition"]
         top3 = workbook["Top 3 Historico"]
-        self.assertEqual(conditions["B3"].value, "DENT")
-        self.assertEqual(conditions["B4"].value, "SCRATCH")
-        self.assertEqual(conditions["B8"].value, "DENT")
-        self.assertEqual(conditions["C8"].value, "SCRATCH")
+        self.assertEqual(conditions["B2"].value, "DENT")
+        self.assertEqual(conditions["C2"].value, "SCRATCH")
+        self.assertEqual(conditions["A5"].value, "Total")
+        self.assertEqual(conditions["B5"].value, "=SUM(B3:B4)")
+        self.assertEqual(conditions["C5"].value, "=SUM(C3:C4)")
+        self.assertEqual(conditions._charts[0].series[0].val.numRef.f, "'Per Condition'!$B$5:$C$5")
+        self.assertEqual(conditions._charts[0].series[0].cat.numRef.f, "'Per Condition'!$B$2:$C$2")
         self.assertEqual(top3["B3"].value, "DENT")
         self.assertEqual(top3["B4"].value, "SCRATCH")
         self.assertEqual(top3["B6"].value, "DENT")

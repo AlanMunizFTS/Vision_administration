@@ -243,6 +243,11 @@ def _station_list(data):
     return sorted(names, key=_station_name)
 
 
+def _condition_station_list(data):
+    names = {row.get("source_station") or "" for row in data.get("condition_periods") or []}
+    return sorted(names, key=_station_name)
+
+
 def _combined_as_station_data(data):
     combined = (data or {}).get("combined") or {}
 
@@ -311,6 +316,50 @@ def _top_history_rows(rows, classes):
         item = by_date[day]
         output.append([day, *[_normalize_int(item[name]) if name in item else "" for name in classes]])
     return output
+
+
+def _append_condition_daily_table(sheet, table_name, headers, daily_rows, start_row):
+    header_row, daily_max_row, daily_max_col = _append_table(
+        sheet,
+        table_name,
+        headers,
+        daily_rows,
+        start_row=start_row,
+    )
+    if daily_max_col <= 1:
+        return header_row, daily_max_row, daily_max_col, None
+
+    total_row = daily_max_row + 1
+    sheet.cell(row=total_row, column=1, value="Total")
+    sheet.cell(row=total_row, column=1).font = Font(bold=True)
+    for col_idx in range(2, daily_max_col + 1):
+        col_letter = get_column_letter(col_idx)
+        cell = sheet.cell(row=total_row, column=col_idx)
+        cell.value = f"=SUM({col_letter}{header_row + 1}:{col_letter}{daily_max_row})"
+        cell.font = Font(bold=True)
+
+    return header_row, daily_max_row, daily_max_col, total_row
+
+
+def _add_condition_pie_chart(sheet, label, classes, header_row, total_row, colors_by_defect, anchor):
+    if not classes or not total_row:
+        return
+
+    class_end_col = 1 + len(classes)
+    chart = PieChart()
+    chart.title = f"{label} - Rechazos por clase"
+    chart.height = 8
+    chart.width = 12
+    chart.add_data(
+        Reference(sheet, min_col=2, max_col=class_end_col, min_row=total_row, max_row=total_row),
+        from_rows=True,
+    )
+    chart.set_categories(Reference(sheet, min_col=2, max_col=class_end_col, min_row=header_row, max_row=header_row))
+    chart.series[0].data_points = [
+        DataPoint(idx=idx, spPr=GraphicalProperties(solidFill=_defect_color(colors_by_defect, class_name)))
+        for idx, class_name in enumerate(classes)
+    ]
+    sheet.add_chart(chart, anchor)
 
 
 def _format_percentage_columns(sheet, columns, start_row=2):
@@ -597,54 +646,17 @@ def _append_combined_daily_section(sheet, data):
 
 def _write_conditions_sheet(workbook, data, colors_by_defect):
     sheet = workbook.create_sheet("Per Condition")
-    stations = _station_list(data)
-    totals_by_station = _group_by(data.get("condition_totals") or [], "source_station")
+    stations = _condition_station_list(data)
     periods_by_station = _group_by(data.get("condition_periods") or [], "source_station")
     row_cursor = 1
 
     if not stations:
-        _append_table(sheet, "tblConditionEmpty", ["Source Station", "Class Name", "NOK"], [])
+        _append_table(sheet, "tblConditionEmpty", ["Fecha", "Total NOK"], [])
         _fit_columns(sheet)
         return sheet
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Rechazos por clase")
-        sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
-        row_cursor += 1
-
-        grouped_totals = {}
-        for row in totals_by_station.get(station) or []:
-            class_name = _defect_name(row.get("class_name"))
-            if class_name == "OK":
-                continue
-            grouped_totals[class_name] = grouped_totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
-        total_rows = [
-            [label, class_name, nok_pieces]
-            for class_name, nok_pieces in sorted(grouped_totals.items())
-        ]
-        total_header, total_max_row, _ = _append_table(
-            sheet,
-            f"tblConditionTotals{station_idx}",
-            ["Source Station", "Class Name", "NOK"],
-            total_rows,
-            start_row=row_cursor,
-        )
-
-        if total_rows:
-            chart = PieChart()
-            chart.title = f"{label} - Rechazos por clase"
-            chart.height = 8
-            chart.width = 12
-            chart.add_data(Reference(sheet, min_col=3, min_row=total_header, max_row=total_max_row), titles_from_data=True)
-            chart.set_categories(Reference(sheet, min_col=2, min_row=total_header + 1, max_row=total_max_row))
-            chart.series[0].data_points = [
-                DataPoint(idx=idx, spPr=GraphicalProperties(solidFill=_defect_color(colors_by_defect, row[1])))
-                for idx, row in enumerate(total_rows)
-            ]
-            sheet.add_chart(chart, "E" + str(total_header))
-
-        row_cursor = total_max_row + 3
         sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
@@ -653,14 +665,23 @@ def _write_conditions_sheet(workbook, data, colors_by_defect):
         classes = _condition_classes(periods)
         headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
-        _, daily_max_row, _ = _append_table(
+        header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
             f"tblConditionDaily{station_idx}",
             headers,
             daily_rows,
-            start_row=row_cursor,
+            row_cursor,
         )
-        row_cursor = daily_max_row + 3
+        _add_condition_pie_chart(
+            sheet,
+            label,
+            classes,
+            header_row,
+            total_row,
+            colors_by_defect,
+            f"{get_column_letter(daily_max_col + 2)}{header_row}",
+        )
+        row_cursor = (total_row or daily_max_row) + 3
 
     sheet.freeze_panes = "A2"
     _fit_columns(sheet)
@@ -669,11 +690,10 @@ def _write_conditions_sheet(workbook, data, colors_by_defect):
 
 def _append_combined_conditions_section(sheet, data, colors_by_defect):
     combined_data = _combined_as_station_data(data)
-    stations = _station_list(combined_data)
+    stations = _condition_station_list(combined_data)
     if not stations:
         return
 
-    totals_by_station = _group_by(combined_data.get("condition_totals") or [], "source_station")
     periods_by_station = _group_by(combined_data.get("condition_periods") or [], "source_station")
     row_cursor = sheet.max_row + 3
     sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Per Condition")
@@ -682,39 +702,6 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect):
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Rechazos por clase")
-        sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
-        row_cursor += 1
-
-        grouped_totals = {}
-        for row in totals_by_station.get(station) or []:
-            class_name = _defect_name(row.get("class_name"))
-            if class_name == "OK":
-                continue
-            grouped_totals[class_name] = grouped_totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
-        total_rows = [[label, class_name, nok_pieces] for class_name, nok_pieces in sorted(grouped_totals.items())]
-        total_header, total_max_row, _ = _append_table(
-            sheet,
-            f"tblCombinedConditionTotals{station_idx}",
-            ["Source Station", "Class Name", "NOK"],
-            total_rows,
-            start_row=row_cursor,
-        )
-
-        if total_rows:
-            chart = PieChart()
-            chart.title = f"{label} - Rechazos por clase"
-            chart.height = 8
-            chart.width = 12
-            chart.add_data(Reference(sheet, min_col=3, min_row=total_header, max_row=total_max_row), titles_from_data=True)
-            chart.set_categories(Reference(sheet, min_col=2, min_row=total_header + 1, max_row=total_max_row))
-            chart.series[0].data_points = [
-                DataPoint(idx=idx, spPr=GraphicalProperties(solidFill=_defect_color(colors_by_defect, row[1])))
-                for idx, row in enumerate(total_rows)
-            ]
-            sheet.add_chart(chart, "E" + str(total_header))
-
-        row_cursor = total_max_row + 3
         sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
@@ -723,14 +710,23 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect):
         classes = _condition_classes(periods)
         headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
-        _, daily_max_row, _ = _append_table(
+        header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
             f"tblCombinedConditionDaily{station_idx}",
             headers,
             daily_rows,
-            start_row=row_cursor,
+            row_cursor,
         )
-        row_cursor = daily_max_row + 3
+        _add_condition_pie_chart(
+            sheet,
+            label,
+            classes,
+            header_row,
+            total_row,
+            colors_by_defect,
+            f"{get_column_letter(daily_max_col + 2)}{header_row}",
+        )
+        row_cursor = (total_row or daily_max_row) + 3
 
     _fit_columns(sheet)
 
