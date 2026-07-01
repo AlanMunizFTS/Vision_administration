@@ -334,6 +334,7 @@ def excel_report_from_summary(payload: dict = Body(...)):
         end_at=str(filters.get("end_at") or ""),
         source_station=_source_station_filter_label(filters),
         part_numbers=_list_filter_values(filters, "part_numbers") or None,
+        filter_part_numbers=False,
     )
     workbook = build_workbook(report_params, data)
     return _workbook_response(workbook)

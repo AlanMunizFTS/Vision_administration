@@ -282,6 +282,22 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(daily["C3"].value, "Part Number: PN-1, PN-2")
         self.assertEqual(daily["A8"].value, "2026-06-25")
 
+    def test_build_workbook_does_not_refilter_frontend_visible_data(self):
+        params = ReportParams(
+            api_url="frontend",
+            start_at="2026-06-19 00:00:00",
+            end_at="2026-06-26 23:59:59",
+            part_numbers=["PN-1"],
+            filter_part_numbers=False,
+        )
+
+        workbook = build_workbook(params, SAMPLE_REJECT_SUMMARY)
+
+        daily = workbook["Por dia"]
+        self.assertEqual(daily["C3"].value, "Part Number: PN-1")
+        self.assertEqual(daily["A8"].value, "2026-06-25")
+        self.assertEqual(daily["B8"].value, 3)
+
     def test_build_workbook_displays_art_endform_stations_as_tesla_names(self):
         data = {
             "stations": [],

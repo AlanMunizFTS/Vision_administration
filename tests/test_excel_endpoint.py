@@ -109,6 +109,7 @@ class ExcelEndpointTests(unittest.TestCase):
         self.assertEqual(response.media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         report_params = build_workbook.call_args.args[0]
         self.assertEqual(report_params.part_numbers, ["PN-1", "PN-2"])
+        self.assertFalse(report_params.filter_part_numbers)
 
     def test_excel_report_uses_default_period_when_dates_are_missing(self):
         fake_db = object()

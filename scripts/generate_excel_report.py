@@ -39,6 +39,7 @@ class ReportParams:
     end_at: str
     source_station: str | None = None
     part_numbers: list[str] | None = None
+    filter_part_numbers: bool = True
     output_dir: str = DEFAULT_OUTPUT_DIR
 
 
@@ -101,8 +102,6 @@ def fetch_report_data(report_params, session=None):
     }
     if report_params.source_station:
         params["source_station"] = report_params.source_station
-    if report_params.part_numbers:
-        params["part_numbers"] = report_params.part_numbers
 
     return _request_json(
         session,
@@ -1140,7 +1139,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
 
 def build_workbook(report_params, data):
     workbook = Workbook()
-    data = _apply_part_number_filter(data, report_params.part_numbers)
+    data = _apply_part_number_filter(data, report_params.part_numbers) if report_params.filter_part_numbers else (data or {})
     colors_by_defect = _defect_color_map(data)
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     condition_ranges = {}
