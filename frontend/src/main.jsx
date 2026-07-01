@@ -723,11 +723,7 @@ function App() {
           <p>Analisis por Tesla / lado, condicion y Top 3 historico</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={() => applyFilters()} disabled={loading} title="Aplicar filtros">
-            <RefreshCw size={17} />
-            {loading ? "Aplicando" : "Aplicar"}
-          </button>
-          <button type="button" onClick={downloadExcel} disabled={!canDownloadExcel} title="Descargar Excel">
+          <button type="button" className="button-success" onClick={downloadExcel} disabled={!canDownloadExcel} title="Descargar Excel">
             <Download size={17} />
             {exporting ? "Exportando" : "Excel"}
           </button>
@@ -749,6 +745,12 @@ function App() {
           <span className="filter-hint">Selecciona estaciones base; cada una incluye LEFT y RIGHT.</span>
         </div>
       </section>
+      <div className="filter-actions">
+        <button type="button" className="button-primary" onClick={() => applyFilters()} disabled={loading} title="Aplicar filtros">
+          <RefreshCw size={17} />
+          {loading ? "Aplicando" : "Aplicar"}
+        </button>
+      </div>
 
       {error ? <div className="error">{error}</div> : null}
       {loading ? <div className="loading">Cargando datos...</div> : null}

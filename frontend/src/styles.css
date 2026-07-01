@@ -69,11 +69,31 @@ button:disabled {
   cursor: default;
 }
 
+.button-primary {
+  border-color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.button-primary:hover {
+  background: #1d4ed8;
+}
+
+.button-success {
+  border-color: #15803d;
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.button-success:hover {
+  background: #15803d;
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(5, minmax(150px, 1fr));
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   padding: 14px;
   border: 1px solid #cfd6dd;
   background: #ffffff;
@@ -127,6 +147,7 @@ select {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 14px;
 }
 
 .small-button {
