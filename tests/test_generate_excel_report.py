@@ -261,6 +261,111 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(daily._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(daily._charts[0].y_axis.scaling.max, 1)
 
+    def test_build_workbook_displays_art_endform_stations_as_tesla_names(self):
+        data = {
+            "stations": [],
+            "daily": [
+                {
+                    "source_station": "ART_ENDFORM_1859_LEFT",
+                    "reject_date": "2026-06-25",
+                    "total_pieces": 4,
+                    "ok_pieces": 3,
+                    "nok_pieces": 1,
+                    "pct_ok": 0.75,
+                    "pct_nok": 0.25,
+                },
+                {
+                    "source_station": "ART_ENDFORM_1859_RIGHT",
+                    "reject_date": "2026-06-25",
+                    "total_pieces": 6,
+                    "ok_pieces": 4,
+                    "nok_pieces": 2,
+                    "pct_ok": 0.667,
+                    "pct_nok": 0.333,
+                },
+            ],
+            "condition_periods": [
+                {
+                    "source_station": "ART_ENDFORM_1859_LEFT",
+                    "reject_date": "2026-06-25",
+                    "class_name": "scratch",
+                    "nok_pieces": 1,
+                    "ok_pieces": 0,
+                    "total_pieces": 1,
+                }
+            ],
+            "condition_totals": [
+                {"source_station": "ART_ENDFORM_1859_LEFT", "class_name": "scratch", "nok_pieces": 1},
+            ],
+            "top3_history": [
+                {
+                    "source_station": "ART_ENDFORM_1859_LEFT",
+                    "class_name": "scratch",
+                    "total_nok_pieces": 1,
+                    "class_rank": 1,
+                    "reject_date": "2026-06-25",
+                    "nok_pieces": 1,
+                }
+            ],
+            "combined": {
+                "stations": [],
+                "daily": [
+                    {
+                        "station_pair": "ART_ENDFORM_1859",
+                        "reject_date": "2026-06-25",
+                        "total_pieces": 10,
+                        "ok_pieces": 7,
+                        "nok_pieces": 3,
+                        "pct_ok": 0.7,
+                        "pct_nok": 0.3,
+                    }
+                ],
+                "condition_periods": [
+                    {
+                        "station_pair": "ART_ENDFORM_1859",
+                        "reject_date": "2026-06-25",
+                        "class_name": "scratch",
+                        "nok_pieces": 3,
+                        "ok_pieces": 0,
+                        "total_pieces": 3,
+                    }
+                ],
+                "condition_totals": [
+                    {"station_pair": "ART_ENDFORM_1859", "class_name": "scratch", "nok_pieces": 3},
+                ],
+                "top3_history": [
+                    {
+                        "station_pair": "ART_ENDFORM_1859",
+                        "class_name": "scratch",
+                        "total_nok_pieces": 3,
+                        "class_rank": 1,
+                        "reject_date": "2026-06-25",
+                        "nok_pieces": 3,
+                    }
+                ],
+            },
+        }
+
+        workbook = build_workbook(self.make_params(), data)
+        daily = workbook["Por dia"]
+        conditions = workbook["Per Condition"]
+        top3 = workbook["Top 3 Historico"]
+
+        self.assertEqual(daily["B1"].value, "Tesla 1")
+        self.assertEqual(daily["B2"].value, "Left")
+        self.assertEqual(daily["G2"].value, "Right")
+        self.assertEqual(daily["L2"].value, "Combinado")
+        self.assertEqual(conditions["A1"].value, "Tesla 1 - Left - Defectos dia a dia")
+        self.assertIn(
+            "Tesla 1 - Defectos dia a dia",
+            [cell.value for row in conditions.iter_rows() for cell in row],
+        )
+        self.assertEqual(top3["A1"].value, "Tesla 1 - Left - Top 3 NOK por dia")
+        self.assertIn(
+            "Tesla 1 - Top 3 NOK por dia",
+            [cell.value for row in top3.iter_rows() for cell in row],
+        )
+
     def test_build_workbook_uppercases_and_alpha_sorts_defect_names(self):
         workbook = build_workbook(self.make_params(), SAMPLE_REJECT_SUMMARY)
 

@@ -26,6 +26,11 @@ const TABS = [
 
 const COLORS = ["#2f6f9f", "#c9564a", "#6f8f3f", "#d39b32", "#7259a4", "#3f8f88", "#8a5c3b", "#69717c"];
 const DAY_MS = 24 * 60 * 60 * 1000;
+const STATION_DISPLAY_NAMES = {
+  ART_ENDFORM_1859: "Tesla 1",
+  ART_ENDFORM_1861: "Tesla 2",
+  ART_ENDFORM_1862: "Tesla 3"
+};
 
 function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
@@ -107,7 +112,14 @@ function dateLabel(value) {
 }
 
 function stationName(value) {
-  return value || "Sin estacion";
+  const text = String(value || "").trim();
+  if (!text) return "Sin estacion";
+  const match = text.match(/(?:\s*-\s*|_)(LEFT|RIGHT)$/i);
+  const rawBase = match ? text.slice(0, match.index).trim().replace(/[ _-]+$/g, "") : text;
+  const displayBase = STATION_DISPLAY_NAMES[rawBase];
+  if (!displayBase) return text;
+  if (!match) return displayBase;
+  return `${displayBase} - ${match[1].toUpperCase() === "LEFT" ? "Left" : "Right"}`;
 }
 
 function stationPairFromStation(value) {
@@ -115,7 +127,7 @@ function stationPairFromStation(value) {
 }
 
 function stationPairName(value) {
-  return value || "Sin estacion";
+  return stationName(value);
 }
 
 function defectName(value) {

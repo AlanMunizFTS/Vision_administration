@@ -21,6 +21,11 @@ DEFAULT_DAYS = 7
 DEFAULT_OUTPUT_DIR = "reports"
 REQUEST_TIMEOUT_SECONDS = 20
 COLORS = ("2f6f9f", "c9564a", "6f8f3f", "d39b32", "7259a4", "3f8f88", "8a5c3b", "69717c")
+STATION_DISPLAY_NAMES = {
+    "ART_ENDFORM_1859": "Tesla 1",
+    "ART_ENDFORM_1861": "Tesla 2",
+    "ART_ENDFORM_1862": "Tesla 3",
+}
 
 
 class ReportError(RuntimeError):
@@ -118,7 +123,20 @@ def _date_label(value):
 
 
 def _station_name(value):
-    return value or "Sin estacion"
+    text = str(value or "").strip()
+    if not text:
+        return "Sin estacion"
+
+    match = re.search(r"(?:\s*-\s*|_)(LEFT|RIGHT)$", text, re.IGNORECASE)
+    raw_base = text[: match.start()].strip(" _-") if match else text
+    display_base = STATION_DISPLAY_NAMES.get(raw_base)
+    if not display_base:
+        return text
+    if not match:
+        return display_base
+
+    side = match.group(1).upper()
+    return f"{display_base} - {'Left' if side == 'LEFT' else 'Right'}"
 
 
 def _defect_name(value):
