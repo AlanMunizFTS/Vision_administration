@@ -38,6 +38,7 @@ class ReportParams:
     start_at: str
     end_at: str
     source_station: str | None = None
+    part_numbers: list[str] | None = None
     output_dir: str = DEFAULT_OUTPUT_DIR
 
 
@@ -71,6 +72,7 @@ def build_params(args):
         start_at=start_at.isoformat(sep=" ", timespec="seconds"),
         end_at=end_at.isoformat(sep=" ", timespec="seconds"),
         source_station=args.source_station,
+        part_numbers=args.part_numbers or None,
         output_dir=args.output_dir,
     )
 
@@ -99,6 +101,8 @@ def fetch_report_data(report_params, session=None):
     }
     if report_params.source_station:
         params["source_station"] = report_params.source_station
+    if report_params.part_numbers:
+        params["part_numbers"] = report_params.part_numbers
 
     return _request_json(
         session,
@@ -478,6 +482,41 @@ def _format_percentage_columns(sheet, columns, start_row=2):
 
 DAILY_METRICS = ("OK", "NOK", "Total", "% OK", "% NOK")
 DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combinado")
+DAILY_FILTER_ROWS = 4
+
+
+def _filter_value(value):
+    text = str(value or "").strip()
+    return text or "Todos"
+
+
+def _filter_list_value(values):
+    cleaned = [str(value).strip() for value in values or [] if str(value or "").strip()]
+    return ", ".join(cleaned) if cleaned else "Todos"
+
+
+def _write_filter_band(sheet, report_params):
+    title_fill = PatternFill(fill_type="solid", fgColor="E8EEF5")
+    label_font = Font(bold=True)
+    rows = [
+        ("Filtros aplicados", ""),
+        (f"Inicio: {_filter_value(report_params.start_at)}", f"Fin: {_filter_value(report_params.end_at)}"),
+        (f"Estacion: {_filter_value(report_params.source_station)}", f"Part Number: {_filter_list_value(report_params.part_numbers)}"),
+    ]
+
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    sheet.cell(row=1, column=1, value=rows[0][0])
+    sheet.cell(row=1, column=1).fill = title_fill
+    sheet.cell(row=1, column=1).font = label_font
+    sheet.cell(row=1, column=1).alignment = Alignment(horizontal="left", vertical="center")
+
+    for row_idx, (left, right) in enumerate(rows[1:], start=2):
+        sheet.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=2)
+        sheet.merge_cells(start_row=row_idx, start_column=3, end_row=row_idx, end_column=4)
+        sheet.cell(row=row_idx, column=1, value=left)
+        sheet.cell(row=row_idx, column=3, value=right)
+        sheet.cell(row=row_idx, column=1).font = label_font
+        sheet.cell(row=row_idx, column=3).font = label_font
 
 
 def _split_station_side(value):
@@ -563,9 +602,10 @@ def _apply_daily_border(sheet, min_row, max_row, min_col, max_col):
             cell.border = Border(left=left, right=right, top=top, bottom=bottom)
 
 
-def _write_daily_sheet(workbook, data):
+def _write_daily_sheet(workbook, data, report_params):
     sheet = workbook.active
     sheet.title = "Por dia"
+    _write_filter_band(sheet, report_params)
     dates, groups, by_block_date = _daily_layout(data)
     header_fill = PatternFill(fill_type="solid", fgColor="404040")
     header_font = Font(color="FFFFFF", bold=True)
@@ -573,12 +613,16 @@ def _write_daily_sheet(workbook, data):
     percent_cols = []
     nok_percent_cols = []
     series_cols = []
+    group_row = DAILY_FILTER_ROWS + 1
+    block_row = group_row + 1
+    metric_row = group_row + 2
+    data_start_row = group_row + 3
 
-    sheet.cell(row=3, column=1, value="Date")
-    sheet.cell(row=3, column=1).fill = header_fill
-    sheet.cell(row=3, column=1).font = header_font
-    sheet.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
-    _apply_daily_border(sheet, 1, 3, 1, 1)
+    sheet.cell(row=metric_row, column=1, value="Date")
+    sheet.cell(row=metric_row, column=1).fill = header_fill
+    sheet.cell(row=metric_row, column=1).font = header_font
+    sheet.cell(row=metric_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    _apply_daily_border(sheet, group_row, metric_row, 1, 1)
 
     col_idx = 2
     for base, blocks in groups:
@@ -586,13 +630,13 @@ def _write_daily_sheet(workbook, data):
         for block in blocks:
             block_start_col = col_idx
             block_end_col = col_idx + len(DAILY_METRICS) - 1
-            sheet.merge_cells(start_row=2, start_column=block_start_col, end_row=2, end_column=block_end_col)
-            sheet.cell(row=2, column=block_start_col, value=block)
-            sheet.cell(row=2, column=block_start_col).alignment = Alignment(horizontal="center", vertical="center")
+            sheet.merge_cells(start_row=block_row, start_column=block_start_col, end_row=block_row, end_column=block_end_col)
+            sheet.cell(row=block_row, column=block_start_col, value=block)
+            sheet.cell(row=block_row, column=block_start_col).alignment = Alignment(horizontal="center", vertical="center")
 
             for metric_offset, metric in enumerate(DAILY_METRICS):
                 metric_col = block_start_col + metric_offset
-                cell = sheet.cell(row=3, column=metric_col, value=metric)
+                cell = sheet.cell(row=metric_row, column=metric_col, value=metric)
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -602,16 +646,15 @@ def _write_daily_sheet(workbook, data):
                     nok_percent_cols.append(metric_col)
                     series_cols.append((base, block, metric_col))
 
-            _apply_daily_border(sheet, 2, 3, block_start_col, block_end_col)
+            _apply_daily_border(sheet, block_row, metric_row, block_start_col, block_end_col)
             col_idx = block_end_col + 1
 
         base_end_col = col_idx - 1
-        sheet.merge_cells(start_row=1, start_column=base_start_col, end_row=1, end_column=base_end_col)
-        sheet.cell(row=1, column=base_start_col, value=base)
-        sheet.cell(row=1, column=base_start_col).alignment = Alignment(horizontal="center", vertical="center")
-        _apply_daily_border(sheet, 1, 1, base_start_col, base_end_col)
+        sheet.merge_cells(start_row=group_row, start_column=base_start_col, end_row=group_row, end_column=base_end_col)
+        sheet.cell(row=group_row, column=base_start_col, value=base)
+        sheet.cell(row=group_row, column=base_start_col).alignment = Alignment(horizontal="center", vertical="center")
+        _apply_daily_border(sheet, group_row, group_row, base_start_col, base_end_col)
 
-    data_start_row = 4
     for row_idx, day in enumerate(dates, start=data_start_row):
         sheet.cell(row=row_idx, column=1, value=day)
         sheet.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -626,7 +669,7 @@ def _write_daily_sheet(workbook, data):
 
     data_end_row = data_start_row + len(dates) - 1
     max_col = max(col_idx - 1, 1)
-    sheet.freeze_panes = "A4"
+    sheet.freeze_panes = f"A{data_start_row}"
 
     if dates:
         for col in percent_cols:
@@ -675,7 +718,7 @@ def _write_daily_sheet(workbook, data):
         chart.width = 15
         categories = Reference(sheet, min_col=1, min_row=data_start_row, max_row=data_end_row)
         for base, block, col_idx in series_cols:
-            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=3, max_row=data_end_row)
+            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=metric_row, max_row=data_end_row)
             chart.add_data(values, titles_from_data=True)
             chart.series[-1].tx = SeriesLabel(v=f"{base} - {block}")
         chart.set_categories(categories)
@@ -957,7 +1000,7 @@ def build_workbook(report_params, data):
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     condition_ranges = {}
     combined_condition_ranges = {}
-    daily_sheet = _write_daily_sheet(workbook, data)
+    daily_sheet = _write_daily_sheet(workbook, data, report_params)
     _fit_columns(daily_sheet)
     conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges)
     _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect, combined_condition_ranges)
@@ -987,6 +1030,7 @@ def parse_args(argv=None):
     parser.add_argument("--start-at")
     parser.add_argument("--end-at")
     parser.add_argument("--source-station")
+    parser.add_argument("--part-number", dest="part_numbers", action="append")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args(argv)
 

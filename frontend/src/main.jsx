@@ -49,7 +49,7 @@ function buildQuery(filters, extra = {}) {
 }
 
 function sameFilters(left, right) {
-  return sameDateFilters(left, right) && sameStationFilters(left, right);
+  return sameDateFilters(left, right) && sameStationFilters(left, right) && samePartNumberFilters(left, right);
 }
 
 function sameDateFilters(left, right) {
@@ -67,6 +67,16 @@ function sameStationFilters(left, right) {
   const leftStations = [...stationFilterList(left)].sort();
   const rightStations = [...stationFilterList(right)].sort();
   return leftStations.length === rightStations.length && leftStations.every((station, index) => station === rightStations[index]);
+}
+
+function partNumberFilterList(filters) {
+  return Array.isArray(filters?.part_numbers) ? filters.part_numbers : [];
+}
+
+function samePartNumberFilters(left, right) {
+  const leftPartNumbers = [...partNumberFilterList(left)].sort();
+  const rightPartNumbers = [...partNumberFilterList(right)].sort();
+  return leftPartNumbers.length === rightPartNumbers.length && leftPartNumbers.every((partNumber, index) => partNumber === rightPartNumbers[index]);
 }
 
 async function fetchJson(path) {
@@ -198,14 +208,16 @@ function dashboardFilters(filters) {
   return {
     start_at: toApiDateTime(filters.start_at),
     end_at: toApiDateTime(filters.end_at),
-    station_pairs: stationFilterList(filters)
+    station_pairs: stationFilterList(filters),
+    part_numbers: partNumberFilterList(filters)
   };
 }
 
-function dateFilters(filters) {
+function serverFilters(filters) {
   return {
     start_at: filters?.start_at || "",
-    end_at: filters?.end_at || ""
+    end_at: filters?.end_at || "",
+    part_numbers: partNumberFilterList(filters)
   };
 }
 
@@ -572,18 +584,18 @@ function Top3Tab({ data, stations, colorsByDefect, title }) {
   );
 }
 
-function StationMultiSelect({ options, value, onChange }) {
+function MultiSelect({ options, value, onChange, getLabel = (item) => item, searchPlaceholder, selectedText = "seleccionados" }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const selected = new Set(value || []);
-  const filtered = options.filter((item) => stationPairName(item).toLowerCase().includes(search.trim().toLowerCase()));
-  const label = selected.size ? `${selected.size} seleccionadas` : "Todas";
+  const filtered = options.filter((item) => getLabel(item).toLowerCase().includes(search.trim().toLowerCase()));
+  const label = selected.size ? `${selected.size} ${selectedText}` : "Todas";
 
   function toggle(item) {
     const next = new Set(selected);
     if (next.has(item)) next.delete(item);
     else next.add(item);
-    onChange([...next].sort((a, b) => stationPairName(a).localeCompare(stationPairName(b))));
+    onChange([...next].sort((a, b) => getLabel(a).localeCompare(getLabel(b))));
   }
 
   return (
@@ -598,7 +610,7 @@ function StationMultiSelect({ options, value, onChange }) {
         <div className="multi-select-menu">
           <label className="search-box">
             <Search size={15} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar estacion" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} />
           </label>
           <div className="multi-select-actions">
             <button type="button" className="small-button" onClick={() => onChange([])}>Todas</button>
@@ -608,7 +620,7 @@ function StationMultiSelect({ options, value, onChange }) {
             {filtered.length ? filtered.map((item) => (
               <label className="check-option" key={item}>
                 <input type="checkbox" checked={selected.has(item)} onChange={() => toggle(item)} />
-                <span>{stationPairName(item)}</span>
+                <span>{getLabel(item)}</span>
               </label>
             )) : <div className="empty-option">Sin coincidencias</div>}
           </div>
@@ -619,14 +631,15 @@ function StationMultiSelect({ options, value, onChange }) {
 }
 
 function App() {
-  const [options, setOptions] = useState({ source_stations: [], station_pairs: [] });
+  const [options, setOptions] = useState({ source_stations: [], station_pairs: [], part_numbers: [] });
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
-    station_pairs: []
+    station_pairs: [],
+    part_numbers: []
   }));
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [loadedData, setLoadedData] = useState(null);
-  const [loadedDateFilters, setLoadedDateFilters] = useState(null);
+  const [loadedServerFilters, setLoadedServerFilters] = useState(null);
   const [activeTab, setActiveTab] = useState("daily");
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -648,8 +661,8 @@ function App() {
 
   async function applyFilters(targetFilters = filters) {
     const nextFilters = dashboardFilters(targetFilters);
-    const nextDateFilters = dateFilters(nextFilters);
-    if (loadedData && sameDateFilters(nextDateFilters, loadedDateFilters)) {
+    const nextServerFilters = serverFilters(nextFilters);
+    if (loadedData && sameDateFilters(nextServerFilters, loadedServerFilters) && samePartNumberFilters(nextServerFilters, loadedServerFilters)) {
       setAppliedFilters(nextFilters);
       setError("");
       return;
@@ -658,9 +671,9 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(nextDateFilters)}`);
+      const payload = await fetchJson(`/api/v1/reject-summary${buildQuery(nextServerFilters)}`);
       setLoadedData(payload);
-      setLoadedDateFilters(nextDateFilters);
+      setLoadedServerFilters(nextServerFilters);
       setAppliedFilters(nextFilters);
     } catch (exc) {
       setError(exc.message);
@@ -708,6 +721,7 @@ function App() {
   }
 
   const pairOptions = useMemo(() => stationPairOptions(options), [options]);
+  const partNumberOptions = useMemo(() => [...(options?.part_numbers || [])].filter(Boolean).sort(), [options]);
   const stations = stationList(visibleData);
   const combinedData = useMemo(() => combinedAsStationData(visibleData), [visibleData]);
   const combinedStations = stationList(combinedData);
@@ -741,8 +755,25 @@ function App() {
         </label>
         <div className="station-filter">
           <span>Estacion</span>
-          <StationMultiSelect options={pairOptions} value={filters.station_pairs} onChange={(value) => updateFilter("station_pairs", value)} />
+          <MultiSelect
+            options={pairOptions}
+            value={filters.station_pairs}
+            onChange={(value) => updateFilter("station_pairs", value)}
+            getLabel={stationPairName}
+            searchPlaceholder="Buscar estacion"
+            selectedText="seleccionadas"
+          />
           <span className="filter-hint">Selecciona estaciones base; cada una incluye LEFT y RIGHT.</span>
+        </div>
+        <div className="station-filter">
+          <span>Part Number</span>
+          <MultiSelect
+            options={partNumberOptions}
+            value={filters.part_numbers}
+            onChange={(value) => updateFilter("part_numbers", value)}
+            searchPlaceholder="Buscar part number"
+          />
+          <span className="filter-hint">Selecciona uno o mas numeros de parte.</span>
         </div>
       </section>
       <div className="filter-actions">

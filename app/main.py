@@ -226,15 +226,18 @@ def reject_summary(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
+    part_numbers: list[str] | None = Query(None),
     db=Depends(db_dependency),
 ):
     try:
+        cleaned_part_numbers = _query_list_values(part_numbers)
         return reports.get_reject_summary(
             db,
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
+            part_numbers=cleaned_part_numbers or None,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -276,27 +279,44 @@ def _source_station_filter_label(filters):
     return filters.get("source_station") or None
 
 
+def _list_filter_values(filters, key):
+    values = filters.get(key)
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
+def _query_list_values(values):
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
 @app.get("/api/v1/reports/excel")
 def excel_report(
     start_at: str | None = None,
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
+    part_numbers: list[str] | None = Query(None),
     db=Depends(db_dependency),
 ):
     try:
         start_at, end_at = _excel_period(start_at, end_at)
+        cleaned_part_numbers = _query_list_values(part_numbers)
         report_params = ReportParams(
             api_url="local",
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
+            part_numbers=cleaned_part_numbers or None,
         )
         data = reports.get_reject_summary(
             db,
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
+            part_numbers=cleaned_part_numbers or None,
         )
         workbook = build_workbook(report_params, data)
     except ValueError as exc:
@@ -317,6 +337,7 @@ def excel_report_from_summary(payload: dict = Body(...)):
         start_at=str(filters.get("start_at") or ""),
         end_at=str(filters.get("end_at") or ""),
         source_station=_source_station_filter_label(filters),
+        part_numbers=_list_filter_values(filters, "part_numbers") or None,
     )
     workbook = build_workbook(report_params, data)
     return _workbook_response(workbook)

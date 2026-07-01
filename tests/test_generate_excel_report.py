@@ -187,12 +187,13 @@ class FakeSession:
 
 
 class GenerateExcelReportTests(unittest.TestCase):
-    def make_params(self, output_dir="reports", source_station=None):
+    def make_params(self, output_dir="reports", source_station=None, part_numbers=None):
         return ReportParams(
             api_url="http://testserver",
             start_at="2026-06-19 00:00:00",
             end_at="2026-06-26 23:59:59",
             source_station=source_station,
+            part_numbers=part_numbers,
             output_dir=output_dir,
         )
 
@@ -233,33 +234,45 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(daily.tables, {})
         self.assertTrue(workbook["Per Condition"].tables)
         self.assertTrue(workbook["Top 3 Historico"].tables)
-        self.assertEqual(daily.freeze_panes, "A4")
-        self.assertIn("B1:P1", [str(item) for item in daily.merged_cells.ranges])
-        self.assertIn("B2:F2", [str(item) for item in daily.merged_cells.ranges])
-        self.assertIn("G2:K2", [str(item) for item in daily.merged_cells.ranges])
-        self.assertIn("L2:P2", [str(item) for item in daily.merged_cells.ranges])
-        self.assertEqual(daily["B1"].value, "station-a")
-        self.assertEqual(daily["B2"].value, "Left")
-        self.assertEqual(daily["G2"].value, "Right")
-        self.assertEqual(daily["L2"].value, "Combinado")
-        self.assertEqual([daily.cell(row=3, column=col).value for col in range(1, 7)], ["Date", "OK", "NOK", "Total", "% OK", "% NOK"])
-        self.assertEqual(daily["A4"].value, "2026-06-25")
-        self.assertEqual(daily["B4"].value, 3)
-        self.assertEqual(daily["G4"].value, "")
-        self.assertEqual(daily["L5"].value, 5)
-        self.assertEqual(daily["P5"].value, 0.375)
-        self.assertEqual(daily["F5"].number_format, "0.00%")
-        self.assertEqual(daily["K5"].number_format, "0.00%")
-        self.assertEqual(daily["P5"].number_format, "0.00%")
-        self.assertEqual(daily["F6"].value, "=AVERAGE(F4:F5)")
-        self.assertEqual(daily["K6"].value, "=AVERAGE(K4:K5)")
-        self.assertEqual(daily["P6"].value, "=AVERAGE(P4:P5)")
+        self.assertEqual(daily.freeze_panes, "A8")
+        self.assertEqual(daily["A1"].value, "Filtros aplicados")
+        self.assertEqual(daily["A2"].value, "Inicio: 2026-06-19 00:00:00")
+        self.assertEqual(daily["C2"].value, "Fin: 2026-06-26 23:59:59")
+        self.assertEqual(daily["A3"].value, "Estacion: Todos")
+        self.assertEqual(daily["C3"].value, "Part Number: Todos")
+        self.assertIn("B5:P5", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("B6:F6", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("G6:K6", [str(item) for item in daily.merged_cells.ranges])
+        self.assertIn("L6:P6", [str(item) for item in daily.merged_cells.ranges])
+        self.assertEqual(daily["B5"].value, "station-a")
+        self.assertEqual(daily["B6"].value, "Left")
+        self.assertEqual(daily["G6"].value, "Right")
+        self.assertEqual(daily["L6"].value, "Combinado")
+        self.assertEqual([daily.cell(row=7, column=col).value for col in range(1, 7)], ["Date", "OK", "NOK", "Total", "% OK", "% NOK"])
+        self.assertEqual(daily["A8"].value, "2026-06-25")
+        self.assertEqual(daily["B8"].value, 3)
+        self.assertEqual(daily["G8"].value, "")
+        self.assertEqual(daily["L9"].value, 5)
+        self.assertEqual(daily["P9"].value, 0.375)
+        self.assertEqual(daily["F9"].number_format, "0.00%")
+        self.assertEqual(daily["K9"].number_format, "0.00%")
+        self.assertEqual(daily["P9"].number_format, "0.00%")
+        self.assertEqual(daily["F10"].value, "=AVERAGE(F8:F9)")
+        self.assertEqual(daily["K10"].value, "=AVERAGE(K8:K9)")
+        self.assertEqual(daily["P10"].value, "=AVERAGE(P8:P9)")
         self.assertGreaterEqual(len(daily.conditional_formatting), 4)
         self.assertEqual(len(daily._charts), 1)
         self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Top 3 Historico"]._charts), 1)
         self.assertEqual(daily._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(daily._charts[0].y_axis.scaling.max, 1)
+
+    def test_build_workbook_displays_part_number_filters(self):
+        workbook = build_workbook(self.make_params(part_numbers=["PN-1", "PN-2"]), SAMPLE_REJECT_SUMMARY)
+
+        daily = workbook["Por dia"]
+        self.assertEqual(daily["C3"].value, "Part Number: PN-1, PN-2")
+        self.assertEqual(daily["A8"].value, "2026-06-25")
 
     def test_build_workbook_displays_art_endform_stations_as_tesla_names(self):
         data = {
@@ -351,10 +364,10 @@ class GenerateExcelReportTests(unittest.TestCase):
         conditions = workbook["Per Condition"]
         top3 = workbook["Top 3 Historico"]
 
-        self.assertEqual(daily["B1"].value, "Tesla 1")
-        self.assertEqual(daily["B2"].value, "Left")
-        self.assertEqual(daily["G2"].value, "Right")
-        self.assertEqual(daily["L2"].value, "Combinado")
+        self.assertEqual(daily["B5"].value, "Tesla 1")
+        self.assertEqual(daily["B6"].value, "Left")
+        self.assertEqual(daily["G6"].value, "Right")
+        self.assertEqual(daily["L6"].value, "Combinado")
         self.assertEqual(conditions["A1"].value, "Tesla 1 - Left - Defectos dia a dia")
         self.assertIn(
             "Tesla 1 - Defectos dia a dia",
@@ -440,7 +453,7 @@ class GenerateExcelReportTests(unittest.TestCase):
             self.assertTrue(Path(output_path).exists())
             workbook = load_workbook(output_path)
             self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
-            self.assertEqual(workbook["Por dia"]["A4"].value, "2026-06-25")
+            self.assertEqual(workbook["Por dia"]["A8"].value, "2026-06-25")
 
     def test_empty_data_still_creates_workbook(self):
         params = self.make_params()
@@ -455,9 +468,9 @@ class GenerateExcelReportTests(unittest.TestCase):
         workbook = build_workbook(params, data)
 
         self.assertEqual(workbook.sheetnames, ["Por dia", "Per Condition", "Top 3 Historico"])
-        self.assertEqual(workbook["Por dia"]["A4"].value, "Sin datos")
+        self.assertEqual(workbook["Por dia"]["A8"].value, "Sin datos")
         self.assertEqual(workbook["Por dia"].tables, {})
-        self.assertEqual(workbook["Por dia"].freeze_panes, "A4")
+        self.assertEqual(workbook["Por dia"].freeze_panes, "A8")
         self.assertTrue(workbook["Per Condition"].tables)
         self.assertTrue(workbook["Top 3 Historico"].tables)
 

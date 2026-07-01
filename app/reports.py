@@ -51,6 +51,19 @@ def parse_datetime_param(value, name):
         raise ValueError(f"{name} must be ISO datetime format") from exc
 
 
+def clean_text_list(values):
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    cleaned = []
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
 def build_base_filters(
     start_at=None,
     end_at=None,
@@ -58,6 +71,7 @@ def build_base_filters(
     source_id=None,
     class_name=None,
     min_confidence=None,
+    part_numbers=None,
 ):
     filters = []
     params = []
@@ -77,6 +91,10 @@ def build_base_filters(
     if source_id is not None:
         filters.append("source_id = %s")
         params.append(source_id)
+    cleaned_part_numbers = clean_text_list(part_numbers)
+    if cleaned_part_numbers:
+        filters.append("NULLIF(TRIM(part_number), '') = ANY(%s)")
+        params.append(cleaned_part_numbers)
     if class_name:
         filters.append("class_name = %s")
         params.append(class_name)
@@ -90,7 +108,7 @@ def build_base_filters(
     return where_sql, params
 
 
-def build_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None):
+def build_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None, part_numbers=None):
     filters = []
     params = []
 
@@ -109,6 +127,10 @@ def build_piece_filters(start_at=None, end_at=None, source_station=None, source_
     if source_id is not None:
         filters.append("%s = ANY(source_ids)")
         params.append(source_id)
+    cleaned_part_numbers = clean_text_list(part_numbers)
+    if cleaned_part_numbers:
+        filters.append("part_number = ANY(%s)")
+        params.append(cleaned_part_numbers)
 
     where_sql = ""
     if filters:
@@ -116,7 +138,7 @@ def build_piece_filters(start_at=None, end_at=None, source_station=None, source_
     return where_sql, params
 
 
-def build_combined_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None):
+def build_combined_piece_filters(start_at=None, end_at=None, source_station=None, source_id=None, part_numbers=None):
     filters = []
     params = []
 
@@ -135,6 +157,10 @@ def build_combined_piece_filters(start_at=None, end_at=None, source_station=None
     if source_id is not None:
         filters.append("%s = ANY(source_ids)")
         params.append(source_id)
+    cleaned_part_numbers = clean_text_list(part_numbers)
+    if cleaned_part_numbers:
+        filters.append("part_numbers && %s")
+        params.append(cleaned_part_numbers)
 
     where_sql = ""
     if filters:
@@ -149,6 +175,7 @@ WITH raw AS (
         central_id,
         source_station,
         source_id,
+        part_number,
         img_name,
         jsn,
         class_name,
@@ -181,6 +208,7 @@ pieces AS (
         MIN(raw.captured_at) AS captured_at,
         MIN(raw.created_at) AS created_at_first,
         MAX(raw.created_at) AS created_at_last,
+        MIN(NULLIF(TRIM(raw.part_number), '')) AS part_number,
         ARRAY_AGG(DISTINCT raw.source_id ORDER BY raw.source_id) AS source_ids,
         COUNT(DISTINCT raw.img_name) AS image_count,
         COUNT(*) AS detections_count,
@@ -224,6 +252,7 @@ combined_base AS (
         MIN(pieces.created_at_first) AS created_at_first,
         MAX(pieces.created_at_last) AS created_at_last,
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT pieces.source_station ORDER BY pieces.source_station), NULL) AS source_stations,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT pieces.part_number ORDER BY pieces.part_number), NULL) AS part_numbers,
         SUM(pieces.image_count) AS image_count,
         SUM(pieces.detections_count) AS detections_count,
         selected.main_defect,
@@ -261,6 +290,7 @@ def get_options(db):
     SELECT
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT source_station ORDER BY source_station), NULL) AS source_stations,
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT {station_pair_expr()} ORDER BY {station_pair_expr()}), NULL) AS station_pairs,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT NULLIF(TRIM(part_number), '') ORDER BY NULLIF(TRIM(part_number), '')), NULL) AS part_numbers,
         ARRAY_REMOVE(ARRAY_AGG(DISTINCT class_name ORDER BY class_name), NULL) AS class_names,
         MIN({CAPTURED_AT_EXPR}) AS min_captured_at,
         MAX({CAPTURED_AT_EXPR}) AS max_captured_at,
@@ -295,6 +325,7 @@ def get_results(
         central_id,
         source_station,
         source_id,
+        part_number,
         img_name,
         jsn,
         class_name,
@@ -494,12 +525,13 @@ def get_station_timeseries(
     return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
 
 
-def get_reject_summary(db, start_at=None, end_at=None, source_station=None, source_id=None):
+def get_reject_summary(db, start_at=None, end_at=None, source_station=None, source_id=None, part_numbers=None):
     where_sql, params = build_piece_filters(
         start_at=start_at,
         end_at=end_at,
         source_station=source_station,
         source_id=source_id,
+        part_numbers=part_numbers,
     )
     query = f"""
     {piece_cte()},

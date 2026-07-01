@@ -72,6 +72,33 @@ class ReportsTests(unittest.TestCase):
         self.assertNotIn("jsn = %s", base_where)
         self.assertNotIn("jsn = %s", piece_where)
 
+    def test_filter_builders_add_part_number_predicates(self):
+        base_where, base_params = reports.build_base_filters(part_numbers=["PN-1", " ", "PN-2"])
+        piece_where, piece_params = reports.build_piece_filters(part_numbers=["PN-1", "PN-2"])
+
+        self.assertIn("NULLIF(TRIM(part_number), '') = ANY(%s)", base_where)
+        self.assertIn("part_number = ANY(%s)", piece_where)
+        self.assertEqual(base_params, [["PN-1", "PN-2"]])
+        self.assertEqual(piece_params, [["PN-1", "PN-2"]])
+
+    def test_options_returns_part_numbers(self):
+        db = SequencedDb(
+            [
+                {
+                    "source_stations": ["station-a"],
+                    "station_pairs": ["station-a"],
+                    "part_numbers": ["PN-1", "PN-2"],
+                    "class_names": ["OK"],
+                }
+            ]
+        )
+
+        result = reports.get_options(db)
+
+        query, _ = db.calls[0]
+        self.assertIn("NULLIF(TRIM(part_number), '')", query)
+        self.assertEqual(result["part_numbers"], ["PN-1", "PN-2"])
+
     def test_station_pair_expr_removes_left_right_suffix(self):
         expr = reports.station_pair_expr("source_station")
 
@@ -113,6 +140,15 @@ class ReportsTests(unittest.TestCase):
         self.assertEqual(result["combined"]["stations"][0]["station_pair"], "Tesla 1")
         self.assertEqual(len(db.calls), 1)
         self.assertEqual(db.calls[0][1], ["Tesla 1 - Left"])
+
+    def test_reject_summary_filters_by_part_numbers(self):
+        db = SequencedDb([{}])
+
+        reports.get_reject_summary(db, part_numbers=["PN-1", "PN-2"])
+
+        query, params = db.calls[0]
+        self.assertIn("part_number = ANY(%s)", query)
+        self.assertEqual(params, [["PN-1", "PN-2"]])
 
     def test_reject_summary_groups_by_day_station_and_top3_class(self):
         db = SequencedDb([{}])

@@ -136,9 +136,10 @@ Parametros utiles:
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --days 7
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-06-19T00:00:00" --end-at "2026-06-26T23:59:59"
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --part-number PN-1 --part-number PN-2
 ```
 
-Desde el frontend, la descarga de Excel usa los datos ya cargados en el dashboard para generar el archivo mas rapido y replicar lo visible. Los filtros disponibles para el reporte son fecha y `source_station`; `JSN` ya no esta disponible como filtro.
+Desde el frontend, la descarga de Excel usa los datos ya cargados en el dashboard para generar el archivo mas rapido y replicar lo visible. Los filtros disponibles para el reporte son fecha, `source_station` y `part_number`; `JSN` ya no esta disponible como filtro.
 
 Si estas usando Docker, reconstruye el contenedor y ejecuta el script dentro de `vision-api`:
 
