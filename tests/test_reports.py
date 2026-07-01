@@ -141,14 +141,16 @@ class ReportsTests(unittest.TestCase):
         self.assertEqual(len(db.calls), 1)
         self.assertEqual(db.calls[0][1], ["Tesla 1 - Left"])
 
-    def test_reject_summary_filters_by_part_numbers(self):
+    def test_reject_summary_keeps_part_numbers_as_frontend_dimension(self):
         db = SequencedDb([{}])
 
         reports.get_reject_summary(db, part_numbers=["PN-1", "PN-2"])
 
         query, params = db.calls[0]
-        self.assertIn("part_number = ANY(%s)", query)
-        self.assertEqual(params, [["PN-1", "PN-2"]])
+        self.assertIn("filtered_pieces.part_number", query)
+        self.assertIn("GROUP BY source_station, part_number", query)
+        self.assertNotIn("part_number = ANY(%s)", query)
+        self.assertEqual(params, [])
 
     def test_reject_summary_groups_by_day_station_and_top3_class(self):
         db = SequencedDb([{}])
@@ -159,7 +161,7 @@ class ReportsTests(unittest.TestCase):
         condition_query = db.calls[0][0]
         top3_query = db.calls[0][0]
         self.assertIn("date_trunc('day', captured_at)::date", daily_query)
-        self.assertIn("GROUP BY source_station, date_trunc('day', captured_at)::date", daily_query)
+        self.assertIn("GROUP BY source_station, part_number, date_trunc('day', captured_at)::date", daily_query)
         self.assertIn("main_confidence", top3_query)
         self.assertIn("created_at_last", top3_query)
         self.assertIn("day_bounds", condition_query)
@@ -189,8 +191,8 @@ class ReportsTests(unittest.TestCase):
         filtered_query = db.calls[0][0]
         totals_query = db.calls[0][0]
         self.assertIn("COALESCE(NULLIF(UPPER(TRIM(main_defect)), ''), 'UNCLASSIFIED') AS condition_name", filtered_query)
-        self.assertIn("ORDER BY reject_date ASC, source_station ASC NULLS LAST, class_name ASC", filtered_query)
-        self.assertIn("ORDER BY source_station ASC NULLS LAST, class_name ASC", totals_query)
+        self.assertIn("ORDER BY reject_date ASC, source_station ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC", filtered_query)
+        self.assertIn("ORDER BY source_station ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC", totals_query)
 
 
 if __name__ == "__main__":

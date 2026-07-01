@@ -216,30 +216,131 @@ function dashboardFilters(filters) {
 function serverFilters(filters) {
   return {
     start_at: filters?.start_at || "",
-    end_at: filters?.end_at || "",
-    part_numbers: partNumberFilterList(filters)
+    end_at: filters?.end_at || ""
   };
 }
 
-function filterReportData(data, stationPairs = []) {
+function partNumberValue(row) {
+  return String(row?.part_number || "").trim();
+}
+
+function pct(numerator, denominator) {
+  return denominator ? numerator / denominator : 0;
+}
+
+function aggregatePieceRows(rows = [], keyFields = [], options = {}) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = keyFields.map((field) => row[field] || "").join("\u0001");
+    if (!groups.has(key)) {
+      const item = {};
+      for (const field of keyFields) item[field] = row[field] || "";
+      if (options.sourceStations) item.source_stations = new Set();
+      groups.set(key, { ...item, ok_pieces: 0, nok_pieces: 0, total_pieces: 0 });
+    }
+    const item = groups.get(key);
+    item.ok_pieces += Number(row.ok_pieces || 0);
+    item.nok_pieces += Number(row.nok_pieces || 0);
+    item.total_pieces += Number(row.total_pieces || 0);
+    if (options.sourceStations) {
+      for (const station of row.source_stations || []) item.source_stations.add(station);
+    }
+  }
+  return [...groups.values()].map((item) => ({
+    ...item,
+    source_stations: item.source_stations ? [...item.source_stations].sort() : item.source_stations,
+    pct_ok: pct(item.ok_pieces, item.total_pieces),
+    pct_nok: pct(item.nok_pieces, item.total_pieces)
+  }));
+}
+
+function aggregateConditionPeriods(rows = [], keyFields = []) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = keyFields.map((field) => row[field] || "").join("\u0001");
+    if (!groups.has(key)) {
+      const item = {};
+      for (const field of keyFields) item[field] = row[field] || "";
+      groups.set(key, { ...item, period_start: row.period_start || "", period_end: row.period_end || "", ok_pieces: 0, nok_pieces: 0, total_pieces: 0 });
+    }
+    const item = groups.get(key);
+    item.ok_pieces += Number(row.ok_pieces || 0);
+    item.nok_pieces += Number(row.nok_pieces || 0);
+    item.total_pieces += Number(row.total_pieces || 0);
+    if (row.period_start && (!item.period_start || row.period_start < item.period_start)) item.period_start = row.period_start;
+    if (row.period_end && (!item.period_end || row.period_end > item.period_end)) item.period_end = row.period_end;
+  }
+  return [...groups.values()];
+}
+
+function aggregateConditionTotals(rows = [], stationKey) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = `${row[stationKey] || ""}\u0001${defectName(row.class_name)}`;
+    if (!groups.has(key)) groups.set(key, { [stationKey]: row[stationKey] || "", class_name: defectName(row.class_name), nok_pieces: 0 });
+    groups.get(key).nok_pieces += Number(row.nok_pieces || 0);
+  }
+  return [...groups.values()];
+}
+
+function rebuildTop3History(conditionPeriods = [], stationKey) {
+  const byStation = groupBy(conditionPeriods, stationKey);
+  const output = [];
+  for (const [station, rows] of Object.entries(byStation)) {
+    const totals = {};
+    for (const row of rows) {
+      const name = defectName(row.class_name);
+      if (name === "OK") continue;
+      totals[name] = (totals[name] || 0) + Number(row.nok_pieces || 0);
+    }
+    const topClasses = Object.entries(totals)
+      .sort((a, b) => b[1] - a[1] || compareDefects(a[0], b[0]))
+      .slice(0, 3);
+    topClasses.forEach(([className, total], index) => {
+      const byDate = {};
+      for (const row of rows) {
+        if (defectName(row.class_name) !== className) continue;
+        const day = dateLabel(row.reject_date);
+        if (!day) continue;
+        byDate[day] = (byDate[day] || 0) + Number(row.nok_pieces || 0);
+      }
+      for (const day of Object.keys(byDate).sort()) {
+        output.push({
+          [stationKey]: station,
+          class_name: className,
+          total_nok_pieces: total,
+          class_rank: index + 1,
+          reject_date: day,
+          nok_pieces: byDate[day]
+        });
+      }
+    });
+  }
+  return output;
+}
+
+function filterReportData(data, stationPairs = [], partNumbers = []) {
   if (!data) return null;
   const selectedPairs = new Set(stationPairs);
-  if (!selectedPairs.size) return data;
-  const filterSideRows = (rows = []) => rows.filter((row) => selectedPairs.has(stationPairFromStation(row.source_station || "")));
-  const filterCombinedRows = (rows = []) => rows.filter((row) => selectedPairs.has(row.station_pair || ""));
+  const selectedPartNumbers = new Set(partNumbers);
+  const matchesPartNumber = (row) => !selectedPartNumbers.size || selectedPartNumbers.has(partNumberValue(row));
+  const filterSideRows = (rows = []) => rows.filter((row) => matchesPartNumber(row) && (!selectedPairs.size || selectedPairs.has(stationPairFromStation(row.source_station || ""))));
+  const filterCombinedRows = (rows = []) => rows.filter((row) => matchesPartNumber(row) && (!selectedPairs.size || selectedPairs.has(row.station_pair || "")));
+  const sideConditionPeriods = aggregateConditionPeriods(filterSideRows(data.condition_periods), ["source_station", "reject_date", "class_name"]);
+  const combinedConditionPeriods = aggregateConditionPeriods(filterCombinedRows(data.combined?.condition_periods), ["station_pair", "reject_date", "class_name"]);
   return {
     ...data,
-    stations: filterSideRows(data.stations),
-    daily: filterSideRows(data.daily),
-    condition_periods: filterSideRows(data.condition_periods),
-    condition_totals: filterSideRows(data.condition_totals),
-    top3_history: filterSideRows(data.top3_history),
+    stations: aggregatePieceRows(filterSideRows(data.stations), ["source_station"]),
+    daily: aggregatePieceRows(filterSideRows(data.daily), ["source_station", "reject_date"]),
+    condition_periods: sideConditionPeriods,
+    condition_totals: aggregateConditionTotals(filterSideRows(data.condition_totals), "source_station"),
+    top3_history: rebuildTop3History(sideConditionPeriods, "source_station"),
     combined: data.combined ? {
-      stations: filterCombinedRows(data.combined.stations),
-      daily: filterCombinedRows(data.combined.daily),
-      condition_periods: filterCombinedRows(data.combined.condition_periods),
-      condition_totals: filterCombinedRows(data.combined.condition_totals),
-      top3_history: filterCombinedRows(data.combined.top3_history)
+      stations: aggregatePieceRows(filterCombinedRows(data.combined.stations), ["station_pair"], { sourceStations: true }),
+      daily: aggregatePieceRows(filterCombinedRows(data.combined.daily), ["station_pair", "reject_date"]),
+      condition_periods: combinedConditionPeriods,
+      condition_totals: aggregateConditionTotals(filterCombinedRows(data.combined.condition_totals), "station_pair"),
+      top3_history: rebuildTop3History(combinedConditionPeriods, "station_pair")
     } : undefined
   };
 }
@@ -655,14 +756,14 @@ function App() {
 
   const apiFilters = useMemo(() => dashboardFilters(filters), [filters]);
   const visibleData = useMemo(
-    () => filterReportData(loadedData, appliedFilters?.station_pairs || []),
+    () => filterReportData(loadedData, appliedFilters?.station_pairs || [], appliedFilters?.part_numbers || []),
     [loadedData, appliedFilters]
   );
 
   async function applyFilters(targetFilters = filters) {
     const nextFilters = dashboardFilters(targetFilters);
     const nextServerFilters = serverFilters(nextFilters);
-    if (loadedData && sameDateFilters(nextServerFilters, loadedServerFilters) && samePartNumberFilters(nextServerFilters, loadedServerFilters)) {
+    if (loadedData && sameDateFilters(nextServerFilters, loadedServerFilters)) {
       setAppliedFilters(nextFilters);
       setError("");
       return;

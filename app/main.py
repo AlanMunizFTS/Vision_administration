@@ -226,18 +226,15 @@ def reject_summary(
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
-    part_numbers: list[str] | None = Query(None),
     db=Depends(db_dependency),
 ):
     try:
-        cleaned_part_numbers = _query_list_values(part_numbers)
         return reports.get_reject_summary(
             db,
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
             source_id=source_id,
-            part_numbers=cleaned_part_numbers or None,
         )
     except ValueError as exc:
         handle_report_error(exc)
@@ -316,7 +313,6 @@ def excel_report(
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
-            part_numbers=cleaned_part_numbers or None,
         )
         workbook = build_workbook(report_params, data)
     except ValueError as exc:

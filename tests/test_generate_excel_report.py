@@ -268,7 +268,15 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(daily._charts[0].y_axis.scaling.max, 1)
 
     def test_build_workbook_displays_part_number_filters(self):
-        workbook = build_workbook(self.make_params(part_numbers=["PN-1", "PN-2"]), SAMPLE_REJECT_SUMMARY)
+        data = deepcopy(SAMPLE_REJECT_SUMMARY)
+        for collection in ("stations", "daily", "condition_periods", "condition_totals", "top3_history"):
+            for row in data[collection]:
+                row["part_number"] = "PN-1"
+        for collection in ("stations", "daily", "condition_periods", "condition_totals", "top3_history"):
+            for row in data["combined"][collection]:
+                row["part_number"] = "PN-1"
+
+        workbook = build_workbook(self.make_params(part_numbers=["PN-1", "PN-2"]), data)
 
         daily = workbook["Por dia"]
         self.assertEqual(daily["C3"].value, "Part Number: PN-1, PN-2")

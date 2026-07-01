@@ -291,6 +291,151 @@ def _combined_as_station_data(data):
     }
 
 
+def _part_number_value(row):
+    return str((row or {}).get("part_number") or "").strip()
+
+
+def _pct(numerator, denominator):
+    return numerator / denominator if denominator else 0
+
+
+def _filter_part_rows(rows, selected_part_numbers):
+    selected = set(selected_part_numbers or [])
+    if not selected:
+        return list(rows or [])
+    return [row for row in rows or [] if _part_number_value(row) in selected]
+
+
+def _aggregate_piece_rows(rows, key_fields, include_source_stations=False):
+    groups = {}
+    for row in rows or []:
+        key = tuple(row.get(field) or "" for field in key_fields)
+        if key not in groups:
+            item = {field: row.get(field) or "" for field in key_fields}
+            item.update({"ok_pieces": 0, "nok_pieces": 0, "total_pieces": 0})
+            if include_source_stations:
+                item["source_stations"] = set()
+            groups[key] = item
+
+        item = groups[key]
+        item["ok_pieces"] += _normalize_int(row.get("ok_pieces"))
+        item["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+        item["total_pieces"] += _normalize_int(row.get("total_pieces"))
+        if include_source_stations:
+            item["source_stations"].update(row.get("source_stations") or [])
+
+    output = []
+    for item in groups.values():
+        total = item["total_pieces"]
+        item["pct_ok"] = _pct(item["ok_pieces"], total)
+        item["pct_nok"] = _pct(item["nok_pieces"], total)
+        if include_source_stations:
+            item["source_stations"] = sorted(item["source_stations"])
+        output.append(item)
+    return output
+
+
+def _aggregate_condition_periods(rows, key_fields):
+    groups = {}
+    for row in rows or []:
+        key = tuple(row.get(field) or "" for field in key_fields)
+        if key not in groups:
+            item = {field: row.get(field) or "" for field in key_fields}
+            item.update(
+                {
+                    "period_start": row.get("period_start") or "",
+                    "period_end": row.get("period_end") or "",
+                    "ok_pieces": 0,
+                    "nok_pieces": 0,
+                    "total_pieces": 0,
+                }
+            )
+            groups[key] = item
+
+        item = groups[key]
+        item["ok_pieces"] += _normalize_int(row.get("ok_pieces"))
+        item["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+        item["total_pieces"] += _normalize_int(row.get("total_pieces"))
+        if row.get("period_start") and (not item["period_start"] or row["period_start"] < item["period_start"]):
+            item["period_start"] = row["period_start"]
+        if row.get("period_end") and (not item["period_end"] or row["period_end"] > item["period_end"]):
+            item["period_end"] = row["period_end"]
+
+    return list(groups.values())
+
+
+def _aggregate_condition_totals(rows, station_key):
+    groups = {}
+    for row in rows or []:
+        class_name = _defect_name(row.get("class_name"))
+        key = (row.get(station_key) or "", class_name)
+        groups.setdefault(key, {station_key: key[0], "class_name": class_name, "nok_pieces": 0})
+        groups[key]["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+    return list(groups.values())
+
+
+def _rebuild_top3_history(condition_periods, station_key):
+    output = []
+    for station, rows in _group_by(condition_periods, station_key).items():
+        totals = {}
+        for row in rows:
+            class_name = _defect_name(row.get("class_name"))
+            if class_name == "OK":
+                continue
+            totals[class_name] = totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
+
+        for rank, (class_name, total) in enumerate(sorted(totals.items(), key=lambda item: (-item[1], item[0]))[:3], start=1):
+            by_date = {}
+            for row in rows:
+                if _defect_name(row.get("class_name")) != class_name:
+                    continue
+                day = _date_label(row.get("reject_date"))
+                if day:
+                    by_date[day] = by_date.get(day, 0) + _normalize_int(row.get("nok_pieces"))
+
+            for day in sorted(by_date):
+                output.append(
+                    {
+                        station_key: station,
+                        "class_name": class_name,
+                        "total_nok_pieces": total,
+                        "class_rank": rank,
+                        "reject_date": day,
+                        "nok_pieces": by_date[day],
+                    }
+                )
+    return output
+
+
+def _apply_part_number_filter(data, part_numbers=None):
+    data = data or {}
+    selected = [str(value).strip() for value in part_numbers or [] if str(value or "").strip()]
+    side_periods = _aggregate_condition_periods(
+        _filter_part_rows(data.get("condition_periods"), selected),
+        ("source_station", "reject_date", "class_name"),
+    )
+    combined = data.get("combined") or {}
+    combined_periods = _aggregate_condition_periods(
+        _filter_part_rows(combined.get("condition_periods"), selected),
+        ("station_pair", "reject_date", "class_name"),
+    )
+
+    return {
+        "stations": _aggregate_piece_rows(_filter_part_rows(data.get("stations"), selected), ("source_station",)),
+        "daily": _aggregate_piece_rows(_filter_part_rows(data.get("daily"), selected), ("source_station", "reject_date")),
+        "condition_periods": side_periods,
+        "condition_totals": _aggregate_condition_totals(_filter_part_rows(data.get("condition_totals"), selected), "source_station"),
+        "top3_history": _rebuild_top3_history(side_periods, "source_station"),
+        "combined": {
+            "stations": _aggregate_piece_rows(_filter_part_rows(combined.get("stations"), selected), ("station_pair",), include_source_stations=True),
+            "daily": _aggregate_piece_rows(_filter_part_rows(combined.get("daily"), selected), ("station_pair", "reject_date")),
+            "condition_periods": combined_periods,
+            "condition_totals": _aggregate_condition_totals(_filter_part_rows(combined.get("condition_totals"), selected), "station_pair"),
+            "top3_history": _rebuild_top3_history(combined_periods, "station_pair"),
+        },
+    }
+
+
 def _condition_classes(rows):
     totals = {}
     for row in rows or []:
@@ -995,7 +1140,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
 
 def build_workbook(report_params, data):
     workbook = Workbook()
-    data = data or {}
+    data = _apply_part_number_filter(data, report_params.part_numbers)
     colors_by_defect = _defect_color_map(data)
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     condition_ranges = {}

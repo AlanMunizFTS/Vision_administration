@@ -38,7 +38,6 @@ class ExcelEndpointTests(unittest.TestCase):
             start_at="2026-06-19 00:00:00",
             end_at="2026-06-26 23:59:59",
             source_station="station-a",
-            part_numbers=None,
         )
 
     def test_excel_report_does_not_declare_deprecated_jsn_query_param(self):
@@ -122,7 +121,6 @@ class ExcelEndpointTests(unittest.TestCase):
             start_at="2026-06-19 00:00:00",
             end_at="2026-06-26 23:59:59",
             source_station="station-a",
-            part_numbers=None,
         )
 
     def test_excel_report_rejects_partial_date_range(self):
