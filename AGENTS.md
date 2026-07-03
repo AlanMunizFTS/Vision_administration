@@ -1,71 +1,71 @@
 # AGENTS.md
 
-Instrucciones para agentes y colaboradores que trabajen en este repositorio.
+Instructions for agents and collaborators working in this repository.
 
-## Contexto Del Proyecto
+## Project Context
 
-Esta app combina un backend FastAPI, un frontend React/Vite y un generador Excel. Los reportes leen datos desde `public.model_results_central`; `glidepath` y `change-log` crean y modifican tablas auxiliares propias.
+This app combines a FastAPI backend, a React/Vite frontend, and an Excel generator. Reports read data from `public.model_results_central`; `glidepath` and `change-log` create and update their own auxiliary tables.
 
-## Antes De Cambiar Codigo
+## Before Changing Code
 
-- Revisa `REPO_MAP.md` para ubicar el area correcta.
-- Usa `rg` para buscar referencias antes de borrar o renombrar archivos, rutas, endpoints o campos.
-- No borres `scripts/generate_excel_report.py`: tambien se importa desde `app/main.py`.
-- No asumas que todo es solo lectura: `glidepath` y `change-log` tienen operaciones `POST`, `PATCH` y `DELETE`.
-- No modifiques `.env` con secretos reales. Usa `.env.example` para documentar variables.
+- Review `REPO_MAP.md` to locate the correct area.
+- Use `rg` to search for references before deleting or renaming files, routes, endpoints, or fields.
+- Do not delete `scripts/generate_excel_report.py`: it is also imported from `app/main.py`.
+- Do not assume everything is read-only: `glidepath` and `change-log` include `POST`, `PATCH`, and `DELETE` operations.
+- Do not modify `.env` with real secrets. Use `.env.example` to document variables.
 
 ## Backend
 
-- Punto de entrada: `app/main.py`.
-- Manten la logica SQL compartida en `app/reports.py` cuando afecte reportes o resumen de rechazos.
-- Manten CRUD de glidepath en `app/glidepath.py` y CRUD de cambios en `app/change_log.py`.
-- Si agregas parametros a filtros o endpoints, actualiza frontend, Excel y tests relacionados.
-- Los errores de validacion de reportes deben convertirse a HTTP 400 mediante `handle_report_error`.
+- Entry point: `app/main.py`.
+- Keep shared SQL logic in `app/reports.py` when it affects reports or reject summary behavior.
+- Keep glidepath CRUD in `app/glidepath.py` and process-change CRUD in `app/change_log.py`.
+- If you add filter parameters or endpoint parameters, update the frontend, Excel generator, and related tests.
+- Report validation errors must be converted to HTTP 400 via `handle_report_error`.
 
 ## Frontend
 
-- Punto de entrada: `frontend/src/main.jsx`.
-- Los endpoints se llaman con rutas relativas `/api/...`; en local Vite usa proxy y en Docker Nginx usa `vision-api`.
-- Conserva la compatibilidad entre filtros visibles del dashboard y el payload usado para exportar Excel.
-- Si cambias nombres de campos del API, revisa agregaciones como `filterReportData`, `combinedAsStationData` y `plantWideData`.
+- Entry point: `frontend/src/main.jsx`.
+- Endpoints are called through relative `/api/...` routes; locally Vite uses a proxy and in Docker Nginx uses `vision-api`.
+- Keep compatibility between visible dashboard filters and the payload used for Excel export.
+- If you rename API fields, review aggregations such as `filterReportData`, `combinedAsStationData`, and `plantWideData`.
 
 ## Excel
 
-- `scripts/generate_excel_report.py` soporta dos caminos:
-  - CLI: consulta `/health` y `/api/v1/reject-summary`.
-  - API/frontend: recibe datos ya cargados y construye el workbook.
-- Si cambias estructura de `reject-summary`, actualiza workbook y pruebas.
+- `scripts/generate_excel_report.py` supports two paths:
+  - CLI: calls `/health` and `/api/v1/reject-summary`.
+  - API/frontend: receives already loaded data and builds the workbook.
+- If you change the `reject-summary` structure, update the workbook and tests.
 
-## Pruebas Recomendadas
+## Recommended Tests
 
-Despues de cambios Python:
+After Python changes:
 
 ```powershell
 .\venv\Scripts\python.exe -m unittest discover
 ```
 
-Despues de cambios frontend:
+After frontend changes:
 
 ```powershell
 cd frontend
 npm run build
 ```
 
-Despues de cambios Docker:
+After Docker changes:
 
 ```powershell
 docker compose up --build
 ```
 
-## Documentacion
+## Documentation
 
-- Actualiza `README.md` cuando cambien comandos, endpoints, variables de entorno o comportamiento visible.
-- Actualiza `REPO_MAP.md` cuando agregues, muevas o elimines archivos principales.
-- Manten este archivo enfocado en instrucciones operativas, no en descripcion larga del producto.
+- Update `README.md` when commands, endpoints, environment variables, or visible behavior change.
+- Update `REPO_MAP.md` when you add, move, or remove major files.
+- Keep this file focused on operational instructions, not a long product description.
 
-## Limpieza
+## Cleanup
 
-No confundas artefactos generados con codigo muerto. Estos directorios/archivos pueden limpiarse localmente, pero no son parte del producto:
+Do not confuse generated artifacts with dead code. These directories/files may be cleaned locally, but they are not part of the product:
 
 - `frontend/dist/`
 - `reports/*.xlsx`

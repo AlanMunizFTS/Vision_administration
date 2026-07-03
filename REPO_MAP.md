@@ -1,51 +1,51 @@
 # Repo Map
 
-Mapa rapido del repositorio `Vision_administration`.
+Quick map of the `Vision_administration` repository.
 
-## Proposito
+## Purpose
 
-Dashboard y API local para analizar resultados de vision desde `public.model_results_central`, exportar reportes Excel, administrar glidepaths y registrar cambios de proceso.
+Local dashboard and API for analyzing vision results from `public.model_results_central`, exporting Excel reports, managing glidepaths, and tracking process changes.
 
-## Raiz
+## Root
 
-- `README.md`: guia de ejecucion, endpoints principales y uso del reporte Excel.
-- `docker-compose.yml`: levanta backend `vision-api` y frontend `vision-web`.
-- `Dockerfile`: imagen del backend FastAPI.
-- `requirements.txt`: dependencias Python del backend y generador Excel.
-- `.env.example`: variables requeridas para conectar PostgreSQL.
-- `.gitignore`: ignora entorno virtual, cache, logs y reportes generados.
+- `README.md`: run guide, main endpoints, and Excel report usage.
+- `docker-compose.yml`: starts the `vision-api` backend and `vision-web` frontend.
+- `Dockerfile`: FastAPI backend image.
+- `requirements.txt`: Python dependencies for the backend and Excel generator.
+- `.env.example`: required variables for PostgreSQL connectivity.
+- `.gitignore`: ignores the virtual environment, cache, logs, and generated reports.
 
 ## Backend
 
-- `app/main.py`: aplicacion FastAPI, rutas HTTP, modelos Pydantic y respuestas Excel.
-- `app/db.py`: pool de conexiones PostgreSQL con `psycopg2`.
-- `app/config.py`: carga `.env` local y valida variables de base de datos.
-- `app/reports.py`: consultas SQL y agregaciones para resultados, piezas, defectos, series de tiempo y resumen de rechazos.
-- `app/glidepath.py`: tablas auxiliares y CRUD para proyectos, subproyectos y milestones de glidepath.
-- `app/change_log.py`: tablas auxiliares y CRUD para eventos de cambios de proceso.
+- `app/main.py`: FastAPI app, HTTP routes, Pydantic models, and Excel responses.
+- `app/db.py`: PostgreSQL connection pool using `psycopg2`.
+- `app/config.py`: loads local `.env` values and validates database settings.
+- `app/reports.py`: SQL queries and aggregations for results, pieces, defects, time series, and reject summary.
+- `app/glidepath.py`: auxiliary tables and CRUD for glidepath projects, subprojects, and milestones.
+- `app/change_log.py`: auxiliary tables and CRUD for process change events.
 
 ## Frontend
 
-- `frontend/src/main.jsx`: app React completa, filtros, vistas Overall/Machine/Head, graficas, glidepaths, change log y exportacion Excel.
-- `frontend/src/styles.css`: estilos del dashboard.
-- `frontend/package.json`: scripts Vite (`dev`, `build`, `preview`) y dependencias React/Recharts/Lucide.
-- `frontend/vite.config.js`: proxy local de `/api` hacia `http://127.0.0.1:8000`.
-- `frontend/Dockerfile`: build Vite y entrega con Nginx.
-- `frontend/nginx.conf`: proxy Docker de `/api` hacia `vision-api:8000`.
+- `frontend/src/main.jsx`: complete React app with filters, Overall/Machine/Head views, charts, glidepaths, change log, and Excel export.
+- `frontend/src/styles.css`: dashboard styles.
+- `frontend/package.json`: Vite scripts (`dev`, `build`, `preview`) and React/Recharts/Lucide dependencies.
+- `frontend/vite.config.js`: local `/api` proxy to `http://127.0.0.1:8000`.
+- `frontend/Dockerfile`: Vite build served with Nginx.
+- `frontend/nginx.conf`: Docker `/api` proxy to `vision-api:8000`.
 
 ## Scripts
 
-- `scripts/generate_excel_report.py`: generador de workbook Excel. Se usa como CLI y tambien lo importa `app/main.py` para `/api/v1/reports/excel`.
+- `scripts/generate_excel_report.py`: Excel workbook generator. It runs as a CLI tool and is also imported by `app/main.py` for `/api/v1/reports/excel`.
 
 ## Tests
 
-- `tests/test_reports.py`: pruebas de filtros, SQL generado y forma del resumen de rechazos.
-- `tests/test_excel_endpoint.py`: pruebas del endpoint Excel de FastAPI sin consultar la base real.
-- `tests/test_generate_excel_report.py`: pruebas del workbook, colores, filtros y guardado del Excel.
+- `tests/test_reports.py`: filter tests, generated SQL checks, and reject summary shape validation.
+- `tests/test_excel_endpoint.py`: FastAPI Excel endpoint tests without hitting the real database.
+- `tests/test_generate_excel_report.py`: workbook, color, filter, and Excel save tests.
 
-## Artefactos Locales
+## Local Artifacts
 
-Estos no son codigo fuente y no deben versionarse:
+These are not source code and should not be committed:
 
 - `venv/`
 - `frontend/node_modules/`
@@ -55,11 +55,10 @@ Estos no son codigo fuente y no deben versionarse:
 - `__pycache__/`
 - `.pytest_cache/`
 
-## Flujos Principales
+## Main Workflows
 
-- Docker completo: `docker compose up --build`
-- Backend local: `.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
-- Frontend local: desde `frontend/`, `npm run dev`
-- Tests Python: `.\venv\Scripts\python.exe -m unittest discover`
-- Build frontend: desde `frontend/`, `npm run build`
-
+- Full Docker stack: `docker compose up --build`
+- Local backend: `.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
+- Local frontend: from `frontend/`, run `npm run dev`
+- Python tests: `.\venv\Scripts\python.exe -m unittest discover`
+- Frontend build: from `frontend/`, run `npm run build`
