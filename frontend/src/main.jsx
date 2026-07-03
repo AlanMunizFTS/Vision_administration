@@ -10,21 +10,26 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis
 } from "recharts";
-import { ChevronDown, Download, RefreshCw, Search } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
-  { id: "daily", label: "Por dia" },
+  { id: "daily", label: "By Day" },
   { id: "conditions", label: "Per Condition" },
-  { id: "top3", label: "Top 3 Historico" }
+  { id: "top3", label: "Top 3 History" }
 ];
 
 const COLORS = ["#2f6f9f", "#c9564a", "#6f8f3f", "#d39b32", "#7259a4", "#3f8f88", "#8a5c3b", "#69717c"];
+const PART_NUMBER_BAND_COLORS = ["#c7d2fe", "#bbf7d0", "#fde68a", "#fbcfe8", "#bfdbfe", "#fecaca", "#ddd6fe", "#a7f3d0"];
+const MACHINE_ALL = "__all__";
+const CHANGE_LOG_CATEGORIES = ["Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATION_DISPLAY_NAMES = {
   ART_ENDFORM_1859: "Tesla 1",
@@ -110,7 +115,7 @@ function toApiDateTime(value) {
 }
 
 function numberFormat(value) {
-  return new Intl.NumberFormat("es-MX").format(Number(value || 0));
+  return new Intl.NumberFormat("en-US").format(Number(value || 0));
 }
 
 function percentFormat(value) {
@@ -121,9 +126,15 @@ function dateLabel(value) {
   return String(value || "").slice(0, 10);
 }
 
+function hourLabel(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  return `${text.slice(5, 10)} ${text.slice(11, 16)}`;
+}
+
 function stationName(value) {
   const text = String(value || "").trim();
-  if (!text) return "Sin estacion";
+  if (!text) return "No station";
   const match = text.match(/(?:\s*-\s*|_)(LEFT|RIGHT)$/i);
   const rawBase = match ? text.slice(0, match.index).trim().replace(/[ _-]+$/g, "") : text;
   const displayBase = STATION_DISPLAY_NAMES[rawBase];
@@ -146,7 +157,7 @@ function defectName(value) {
 }
 
 function compareDefects(a, b) {
-  return defectName(a).localeCompare(defectName(b), "es", { sensitivity: "base" });
+  return defectName(a).localeCompare(defectName(b), "en", { sensitivity: "base" });
 }
 
 function reportDefectNames(data) {
@@ -181,8 +192,9 @@ function niceAxisMax(values = []) {
 }
 
 function groupBy(items = [], key) {
+  const getKey = typeof key === "function" ? key : (item) => item[key] || "";
   return items.reduce((acc, item) => {
-    const groupKey = item[key] || "";
+    const groupKey = getKey(item);
     if (!acc[groupKey]) acc[groupKey] = [];
     acc[groupKey].push(item);
     return acc;
@@ -332,12 +344,18 @@ function filterReportData(data, stationPairs = [], partNumbers = []) {
     ...data,
     stations: aggregatePieceRows(filterSideRows(data.stations), ["source_station"]),
     daily: aggregatePieceRows(filterSideRows(data.daily), ["source_station", "reject_date"]),
+    daily_by_part: aggregatePieceRows(filterSideRows(data.daily), ["source_station", "reject_date", "part_number"]),
+    hourly: aggregatePieceRows(filterSideRows(data.hourly), ["source_station", "bucket_start"]),
+    hourly_by_part: aggregatePieceRows(filterSideRows(data.hourly), ["source_station", "bucket_start", "part_number"]),
     condition_periods: sideConditionPeriods,
     condition_totals: aggregateConditionTotals(filterSideRows(data.condition_totals), "source_station"),
     top3_history: rebuildTop3History(sideConditionPeriods, "source_station"),
     combined: data.combined ? {
       stations: aggregatePieceRows(filterCombinedRows(data.combined.stations), ["station_pair"], { sourceStations: true }),
       daily: aggregatePieceRows(filterCombinedRows(data.combined.daily), ["station_pair", "reject_date"]),
+      daily_by_part: aggregatePieceRows(filterCombinedRows(data.combined.daily), ["station_pair", "reject_date", "part_number"]),
+      hourly: aggregatePieceRows(filterCombinedRows(data.combined.hourly), ["station_pair", "bucket_start"]),
+      hourly_by_part: aggregatePieceRows(filterCombinedRows(data.combined.hourly), ["station_pair", "bucket_start", "part_number"]),
       condition_periods: combinedConditionPeriods,
       condition_totals: aggregateConditionTotals(filterCombinedRows(data.combined.condition_totals), "station_pair"),
       top3_history: rebuildTop3History(combinedConditionPeriods, "station_pair")
@@ -351,10 +369,141 @@ function combinedAsStationData(data) {
   return {
     stations: mapRows(data.combined.stations),
     daily: mapRows(data.combined.daily),
+    daily_by_part: mapRows(data.combined.daily_by_part),
+    hourly: mapRows(data.combined.hourly),
+    hourly_by_part: mapRows(data.combined.hourly_by_part),
     condition_periods: mapRows(data.combined.condition_periods),
     condition_totals: mapRows(data.combined.condition_totals),
     top3_history: mapRows(data.combined.top3_history)
   };
+}
+
+const PLANT_WIDE_STATION = "ALL";
+
+function plantWideData(stationData) {
+  if (!stationData) return null;
+  const asAll = (rows = []) => rows.map((row) => ({ ...row, source_station: PLANT_WIDE_STATION }));
+  const conditionPeriods = aggregateConditionPeriods(asAll(stationData.condition_periods), ["source_station", "reject_date", "class_name"]);
+  return {
+    stations: aggregatePieceRows(asAll(stationData.stations), ["source_station"]),
+    daily: aggregatePieceRows(asAll(stationData.daily), ["source_station", "reject_date"]),
+    daily_by_part: aggregatePieceRows(asAll(stationData.daily_by_part), ["source_station", "reject_date", "part_number"]),
+    hourly: aggregatePieceRows(asAll(stationData.hourly), ["source_station", "bucket_start"]),
+    hourly_by_part: aggregatePieceRows(asAll(stationData.hourly_by_part), ["source_station", "bucket_start", "part_number"]),
+    condition_periods: conditionPeriods,
+    condition_totals: aggregateConditionTotals(asAll(stationData.condition_totals), "source_station"),
+    top3_history: rebuildTop3History(conditionPeriods, "source_station")
+  };
+}
+
+function findActiveSubprojects(projects, stations) {
+  const stationSet = new Set((stations || []).filter(Boolean).map((s) => stationPairFromStation(s)));
+  if (!stationSet.size) return [];
+  const matches = [];
+  for (const project of projects || []) {
+    for (const subproject of project.subprojects || []) {
+      if (subproject.status !== "active") continue;
+      const covers = (subproject.station_pairs || []).some((pair) => stationSet.has(pair));
+      if (covers) matches.push({ ...subproject, projectName: project.name });
+    }
+  }
+  return matches;
+}
+
+function stationSide(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/_(LEFT|RIGHT)$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function findChangeLogEntries(entries, stations) {
+  const cleanStations = (stations || []).filter(Boolean);
+  if (!cleanStations.length) return [];
+  const pairsWithAnySide = new Set(cleanStations.map((s) => stationPairFromStation(s)));
+  const sidesByPair = {};
+  for (const station of cleanStations) {
+    const pair = stationPairFromStation(station);
+    const side = stationSide(station);
+    if (side) {
+      if (!sidesByPair[pair]) sidesByPair[pair] = new Set();
+      sidesByPair[pair].add(side);
+    }
+  }
+  return (entries || []).filter((entry) => {
+    if (!pairsWithAnySide.has(entry.station_pair)) return false;
+    const requiredSides = sidesByPair[entry.station_pair];
+    if (!requiredSides) return true;
+    if (entry.side === "both") return true;
+    return requiredSides.has(entry.side);
+  });
+}
+
+function glidepathValueAt(subproject, isoDate) {
+  if (!subproject) return null;
+  const milestones = [...(subproject.milestones || [])].sort((a, b) => a.target_date.localeCompare(b.target_date));
+  const points = [
+    { date: subproject.start_date, value: Number(subproject.start_pct_nok) },
+    ...milestones.map((m) => ({ date: m.target_date, value: Number(m.target_pct_nok) }))
+  ];
+  if (isoDate < points[0].date) return null;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const from = points[i];
+    const to = points[i + 1];
+    if (isoDate >= from.date && isoDate <= to.date) {
+      const fromTime = new Date(`${from.date}T00:00:00`).getTime();
+      const toTime = new Date(`${to.date}T00:00:00`).getTime();
+      const currentTime = new Date(`${isoDate}T00:00:00`).getTime();
+      if (toTime === fromTime) return to.value;
+      const ratio = (currentTime - fromTime) / (toTime - fromTime);
+      return from.value + (to.value - from.value) * ratio;
+    }
+  }
+  return points[points.length - 1].value;
+}
+
+function glidepathChartRows(rows, subprojects, dateKey) {
+  if (!subprojects || !subprojects.length) return rows;
+  return rows.map((row) => {
+    const isoDate = String(row[dateKey] || "").slice(0, 10);
+    const extra = {};
+    for (const subproject of subprojects) {
+      extra[`__glidepath_${subproject.id}`] = isoDate ? glidepathValueAt(subproject, isoDate) : null;
+    }
+    return { ...row, ...extra };
+  });
+}
+
+function changeLogMarkers(entries, chartRows, isHourly) {
+  if (!entries || !entries.length || !chartRows.length) return [];
+  const markers = [];
+  if (isHourly) {
+    const rowsByBucketHour = {};
+    const firstRowByDate = {};
+    for (const row of chartRows) {
+      const bucketStart = String(row.bucket_start || "");
+      const day = bucketStart.slice(0, 10);
+      const hour = bucketStart.slice(11, 13);
+      rowsByBucketHour[`${day}T${hour}`] = row;
+      if (!firstRowByDate[day]) firstRowByDate[day] = row;
+    }
+    const byBucket = groupBy(
+      entries,
+      (entry) => `${entry.change_date}T${entry.change_time ? entry.change_time.slice(0, 2) : "__"}`
+    );
+    for (const [bucketKey, bucketEntries] of Object.entries(byBucket)) {
+      const [day] = bucketKey.split("T");
+      const row = rowsByBucketHour[bucketKey] || firstRowByDate[day];
+      if (row) markers.push({ axisValue: row.reject_date, entries: bucketEntries });
+    }
+  } else {
+    const byDate = groupBy(entries, "change_date");
+    const validDates = new Set(chartRows.map((row) => row.reject_date));
+    for (const [day, dayEntries] of Object.entries(byDate)) {
+      if (validDates.has(day)) markers.push({ axisValue: day, entries: dayEntries });
+    }
+  }
+  return markers;
 }
 
 function dailyChartRows(data, stations) {
@@ -370,6 +519,60 @@ function dailyChartRows(data, stations) {
     }
     return row;
   });
+}
+
+function hourlyChartRows(data, stations) {
+  const byHour = {};
+  for (const row of data?.hourly || []) {
+    const bucketStart = String(row.bucket_start || "");
+    if (!bucketStart) continue;
+    if (!byHour[bucketStart]) byHour[bucketStart] = { bucket_start: bucketStart, reject_date: hourLabel(bucketStart) };
+    byHour[bucketStart][row.source_station || ""] = Number(row.pct_nok || 0) * 100;
+  }
+  return Object.values(byHour).sort((a, b) => a.bucket_start.localeCompare(b.bucket_start)).map((row) => {
+    for (const station of stations) {
+      if (row[station] === undefined) row[station] = null;
+    }
+    return row;
+  });
+}
+
+function partNumberBands(rows, orderedLabels, getLabel) {
+  const totalsByLabel = {};
+  for (const row of rows || []) {
+    const label = getLabel(row);
+    const partNumber = String(row.part_number || "").trim();
+    if (!label || !partNumber) continue;
+    if (!totalsByLabel[label]) totalsByLabel[label] = {};
+    totalsByLabel[label][partNumber] = (totalsByLabel[label][partNumber] || 0) + Number(row.total_pieces || 0);
+  }
+
+  const partNumbersByLabel = {};
+  for (const [label, totals] of Object.entries(totalsByLabel)) {
+    partNumbersByLabel[label] = Object.entries(totals)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([partNumber]) => partNumber);
+  }
+
+  const bands = [];
+  let current = null;
+  for (const label of orderedLabels) {
+    const partNumbers = partNumbersByLabel[label] || null;
+    const key = partNumbers ? partNumbers.join("") : null;
+    if (key && current && current.key === key) {
+      current.end = label;
+    } else {
+      if (current) bands.push(current);
+      current = partNumbers ? { key, partNumbers, start: label, end: label } : null;
+    }
+  }
+  if (current) bands.push(current);
+  return bands;
+}
+
+function partNumberBandColor(partNumber, knownPartNumbers) {
+  const index = knownPartNumbers.indexOf(partNumber);
+  return PART_NUMBER_BAND_COLORS[(index < 0 ? 0 : index) % PART_NUMBER_BAND_COLORS.length];
 }
 
 function topHistoryRows(rows = []) {
@@ -428,6 +631,52 @@ function conditionTotals(rows = []) {
     .map(([class_name, nok_pieces]) => ({ class_name, nok_pieces }));
 }
 
+function overallTotals(data) {
+  const rows = data?.stations || [];
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.ok += Number(row.ok_pieces || 0);
+      acc.nok += Number(row.nok_pieces || 0);
+      acc.total += Number(row.total_pieces || 0);
+      return acc;
+    },
+    { ok: 0, nok: 0, total: 0 }
+  );
+  return {
+    ...totals,
+    pct_ok: pct(totals.ok, totals.total),
+    pct_nok: pct(totals.nok, totals.total)
+  };
+}
+
+function KpiRow({ data, stationCount }) {
+  const totals = overallTotals(data);
+  return (
+    <section className="kpi-row">
+      <div className="kpi-card">
+        <span className="kpi-label"><span className="dot" style={{ background: "#4f46e5" }} /><Layers size={13} /> Total Pieces</span>
+        <span className="kpi-value">{numberFormat(totals.total)}</span>
+        <span className="kpi-sub">{stationCount} station{stationCount === 1 ? "" : "s"} in range</span>
+      </div>
+      <div className="kpi-card good">
+        <span className="kpi-label"><span className="dot" style={{ background: "#16a34a" }} /><CheckCircle2 size={13} /> OK</span>
+        <span className="kpi-value">{numberFormat(totals.ok)}</span>
+        <span className="kpi-sub">{percentFormat(totals.pct_ok)} of total</span>
+      </div>
+      <div className="kpi-card bad">
+        <span className="kpi-label"><span className="dot" style={{ background: "#dc2626" }} /><AlertTriangle size={13} /> NOK</span>
+        <span className="kpi-value">{numberFormat(totals.nok)}</span>
+        <span className="kpi-sub">{percentFormat(totals.pct_nok)} of total</span>
+      </div>
+      <div className="kpi-card">
+        <span className="kpi-label"><span className="dot" style={{ background: "#0ea5e9" }} /><Activity size={13} /> Reject Rate</span>
+        <span className="kpi-value">{percentFormat(totals.pct_nok)}</span>
+        <span className="kpi-sub">Over inspected pieces</span>
+      </div>
+    </section>
+  );
+}
+
 function TabButton({ tab, active, onClick }) {
   return (
     <button type="button" className={`tab-button ${active ? "active" : ""}`} onClick={onClick}>
@@ -436,7 +685,7 @@ function TabButton({ tab, active, onClick }) {
   );
 }
 
-function Empty({ label = "Sin datos" }) {
+function Empty({ label = "No data" }) {
   return <div className="empty">{label}</div>;
 }
 
@@ -444,24 +693,98 @@ function SectionTitle({ children }) {
   return <h2 className="section-title">{children}</h2>;
 }
 
-function DailyTab({ data, stations, title }) {
-  const rows = dailyChartRows(data, stations);
+function TableToggle({ label, children }) {
+  return (
+    <details className="table-toggle">
+      <summary>
+        <ChevronDown size={15} className="chevron" />
+        {label}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+function DailyTab({ data, stations, title, showPartNumberBands = true, glidepathSubprojects = [], changeLogEntries = [] }) {
+  const [granularity, setGranularity] = useState("day");
+  const isHourly = granularity === "hour";
+  const rawRows = isHourly ? hourlyChartRows(data, stations) : dailyChartRows(data, stations);
+  const rows = useMemo(
+    () => glidepathChartRows(rawRows, glidepathSubprojects, isHourly ? "bucket_start" : "reject_date"),
+    [rawRows, glidepathSubprojects, isHourly]
+  );
   const byStation = groupBy(data?.daily || [], "source_station");
+  const orderedDates = rows.map((row) => row.reject_date);
+  const bands = useMemo(() => {
+    if (!showPartNumberBands) return [];
+    return isHourly
+      ? partNumberBands(data?.hourly_by_part, orderedDates, (row) => hourLabel(row.bucket_start))
+      : partNumberBands(data?.daily_by_part, orderedDates, (row) => dateLabel(row.reject_date));
+  }, [data, orderedDates.join("|"), isHourly, showPartNumberBands]);
+  const knownPartNumbers = [...new Set(bands.flatMap((band) => band.partNumbers))];
+  const mixedBands = bands.filter((band) => band.partNumbers.length > 1);
+  const changeMarkers = useMemo(
+    () => changeLogMarkers(changeLogEntries, rows, isHourly),
+    [changeLogEntries, rows, isHourly]
+  );
 
   return (
     <section className="tab-panel">
       {title ? <SectionTitle>{title}</SectionTitle> : null}
       <section className="panel">
-        <div className="panel-title">Tasa de rechazo (% NOK) por dia</div>
+        <div className="panel-title">
+          <span>Reject Rate (% NOK) by {isHourly ? "hour" : "day"}</span>
+          <div className="granularity-toggle">
+            <button type="button" className={!isHourly ? "active" : ""} onClick={() => setGranularity("day")}>Day</button>
+            <button type="button" className={isHourly ? "active" : ""} onClick={() => setGranularity("hour")}>Hour</button>
+          </div>
+        </div>
         <div className="chart-wrap tall">
           {rows.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={rows} margin={{ top: 14, right: 24, bottom: 8, left: 0 }}>
+                <defs>
+                  {mixedBands.map((band) => (
+                    <pattern
+                      key={band.key}
+                      id={`pn-stripe-${band.key.replace(/[^a-zA-Z0-9]/g, "")}`}
+                      patternUnits="userSpaceOnUse"
+                      width="10"
+                      height="10"
+                      patternTransform="rotate(45)"
+                    >
+                      {band.partNumbers.map((partNumber, stripeIndex) => (
+                        <rect
+                          key={partNumber}
+                          x={stripeIndex * (10 / band.partNumbers.length)}
+                          y="0"
+                          width={10 / band.partNumbers.length}
+                          height="10"
+                          fill={partNumberBandColor(partNumber, knownPartNumbers)}
+                        />
+                      ))}
+                    </pattern>
+                  ))}
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#d8dde3" />
-                <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={14} />
+                <XAxis dataKey="reject_date" tick={{ fontSize: 11 }} minTickGap={isHourly ? 24 : 14} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
                 <Tooltip formatter={(value) => (value === null ? "" : `${Number(value).toFixed(1)}%`)} />
                 <Legend />
+                {bands.map((band, index) => (
+                  <ReferenceArea
+                    key={`${band.key}-${band.start}-${index}`}
+                    x1={band.start}
+                    x2={band.end}
+                    fill={
+                      band.partNumbers.length > 1
+                        ? `url(#pn-stripe-${band.key.replace(/[^a-zA-Z0-9]/g, "")})`
+                        : partNumberBandColor(band.partNumbers[0], knownPartNumbers)
+                    }
+                    fillOpacity={band.partNumbers.length > 1 ? 0.65 : 0.45}
+                    ifOverflow="visible"
+                  />
+                ))}
                 {stations.map((station, index) => (
                   <Line
                     key={station || "blank"}
@@ -474,60 +797,112 @@ function DailyTab({ data, stations, title }) {
                     connectNulls
                   />
                 ))}
+                {glidepathSubprojects.map((subproject) => (
+                  <Line
+                    key={`glidepath-${subproject.id}`}
+                    type="linear"
+                    dataKey={`__glidepath_${subproject.id}`}
+                    name={`Glidepath: ${subproject.name}`}
+                    stroke="#16a34a"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={false}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                ))}
+                {changeMarkers.map((marker) => (
+                  <ReferenceLine
+                    key={`change-${marker.axisValue}`}
+                    x={marker.axisValue}
+                    stroke="#9aa1ab"
+                    strokeDasharray="3 3"
+                    ifOverflow="visible"
+                    label={{
+                      value: marker.entries.length > 1 ? `${marker.entries.length} changes` : marker.entries[0].label,
+                      position: "top",
+                      fill: "#6b7280",
+                      fontSize: 10,
+                      fontWeight: 650
+                    }}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           ) : (
             <Empty />
           )}
         </div>
+        {changeMarkers.length ? (
+          <div className="change-log-legend">
+            {changeMarkers.flatMap((marker) => marker.entries).map((entry) => (
+              <span className="change-log-legend-item" key={entry.id} title={entry.description || ""}>
+                <span className="change-log-legend-dot" />
+                {entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""} · {entry.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {knownPartNumbers.length ? (
+          <div className="pn-legend">
+            {knownPartNumbers.map((partNumber) => (
+              <span className="pn-legend-item" key={partNumber}>
+                <span className="pn-legend-swatch" style={{ background: partNumberBandColor(partNumber, knownPartNumbers) }} />
+                {partNumber}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
-        <div className="table-wrap daily">
-          <table className="matrix-table">
-            <thead>
-              <tr>
-                <th rowSpan="2">Date</th>
-                {stations.map((station) => (
-                  <th className="station-group" key={station || "blank"} colSpan="5">{stationName(station)}</th>
-                ))}
-              </tr>
-              <tr>
-                {stations.flatMap((station) => ["OK", "NOK", "Total", "% OK", "% NOK"].map((metric) => (
-                  <th
-                    key={`${station}-${metric}`}
-                    className={`${metric === "OK" ? "group-start" : ""} ${metric === "% NOK" ? "group-end" : ""}`}
-                  >
-                    {metric}
-                  </th>
-                )))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length ? (
-                rows.map((chartRow) => (
-                  <tr key={chartRow.reject_date}>
-                    <td>{chartRow.reject_date}</td>
-                    {stations.flatMap((station) => {
-                      const row = (byStation[station] || []).find((item) => dateLabel(item.reject_date) === chartRow.reject_date);
-                      return [
-                        <td className="group-start" key={`${station}-ok-${chartRow.reject_date}`}>{numberFormat(row?.ok_pieces)}</td>,
-                        <td key={`${station}-nok-${chartRow.reject_date}`}>{numberFormat(row?.nok_pieces)}</td>,
-                        <td key={`${station}-total-${chartRow.reject_date}`}>{numberFormat(row?.total_pieces)}</td>,
-                        <td key={`${station}-pct-ok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_ok) : ""}</td>,
-                        <td className="group-end" key={`${station}-pct-nok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_nok) : ""}</td>
-                      ];
-                    })}
-                  </tr>
-                ))
-              ) : (
+        <TableToggle label="View data table">
+          <div className="table-wrap daily">
+            <table className="matrix-table">
+              <thead>
                 <tr>
-                  <td colSpan={1 + stations.length * 5} className="empty-cell">Sin datos</td>
+                  <th rowSpan="2">Date</th>
+                  {stations.map((station) => (
+                    <th className="station-group" key={station || "blank"} colSpan="5">{stationName(station)}</th>
+                  ))}
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                <tr>
+                  {stations.flatMap((station) => ["OK", "NOK", "Total", "% OK", "% NOK"].map((metric) => (
+                    <th
+                      key={`${station}-${metric}`}
+                      className={`${metric === "OK" ? "group-start" : ""} ${metric === "% NOK" ? "group-end" : ""}`}
+                    >
+                      {metric}
+                    </th>
+                  )))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length ? (
+                  rows.map((chartRow) => (
+                    <tr key={chartRow.reject_date}>
+                      <td>{chartRow.reject_date}</td>
+                      {stations.flatMap((station) => {
+                        const row = (byStation[station] || []).find((item) => dateLabel(item.reject_date) === chartRow.reject_date);
+                        return [
+                          <td className="group-start" key={`${station}-ok-${chartRow.reject_date}`}>{numberFormat(row?.ok_pieces)}</td>,
+                          <td key={`${station}-nok-${chartRow.reject_date}`}>{numberFormat(row?.nok_pieces)}</td>,
+                          <td key={`${station}-total-${chartRow.reject_date}`}>{numberFormat(row?.total_pieces)}</td>,
+                          <td key={`${station}-pct-ok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_ok) : ""}</td>,
+                          <td className="group-end" key={`${station}-pct-nok-${chartRow.reject_date}`}>{row ? percentFormat(row.pct_nok) : ""}</td>
+                        ];
+                      })}
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={1 + stations.length * 5} className="empty-cell">No data</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </TableToggle>
       </section>
     </section>
   );
@@ -545,7 +920,7 @@ function ConditionsTab({ data, stations, colorsByDefect, title }) {
           const totals = conditionTotals(totalsByStation[station] || []);
           return (
             <section className="panel station-card" key={station || "blank"}>
-              <div className="panel-title">{stationName(station)} - Rechazos por clase</div>
+              <div className="panel-title">{stationName(station)} - Rejects by Class</div>
               <div className="chart-wrap pie">
                 {totals.length ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -560,7 +935,7 @@ function ConditionsTab({ data, stations, colorsByDefect, title }) {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <Empty label="Sin rechazos" />
+                  <Empty label="No rejects" />
                 )}
               </div>
             </section>
@@ -575,35 +950,36 @@ function ConditionsTab({ data, stations, colorsByDefect, title }) {
           const rows = conditionDailyRows(periods, classes);
           return (
             <section className="panel station-card" key={`${station || "blank"}-daily`}>
-              <div className="panel-title">{stationName(station)} - Defectos dia a dia</div>
-              <div className="table-wrap condition-daily">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      {classes.map((name) => (
-                        <th key={`${station}-${name}`}>{name}</th>
-                      ))}
-                      <th>Total NOK</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.length ? rows.map((row) => (
-                      <tr key={`${station}-${row.reject_date}`}>
-                        <td>{dateLabel(row.reject_date)}</td>
-                        {classes.map((name) => (
-                          <td key={`${station}-${row.reject_date}-${name}`}>{numberFormat(row[name])}</td>
-                        ))}
-                        <td>{numberFormat(row.total_nok)}</td>
-                      </tr>
-                    )) : (
+              <TableToggle label={`${stationName(station)} - Defects Day by Day`}>
+                <div className="table-wrap condition-daily">
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan={2 + classes.length} className="empty-cell">Sin defectos</td>
+                        <th>Date</th>
+                        {classes.map((name) => (
+                          <th key={`${station}-${name}`}>{name}</th>
+                        ))}
+                        <th>Total NOK</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {rows.length ? rows.map((row) => (
+                        <tr key={`${station}-${row.reject_date}`}>
+                          <td>{dateLabel(row.reject_date)}</td>
+                          {classes.map((name) => (
+                            <td key={`${station}-${row.reject_date}-${name}`}>{numberFormat(row[name])}</td>
+                          ))}
+                          <td>{numberFormat(row.total_nok)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={2 + classes.length} className="empty-cell">No defects</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TableToggle>
             </section>
           );
         }) : null}
@@ -634,7 +1010,7 @@ function Top3Tab({ data, stations, colorsByDefect, title }) {
           });
           return (
             <section className="panel station-card" key={station || "blank"}>
-              <div className="panel-title">{stationName(station)} - Top 3 NOK por dia</div>
+              <div className="panel-title">{stationName(station)} - Top 3 NOK by Day</div>
               <div className="chart-wrap top3">
                 {rows.length ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -653,30 +1029,32 @@ function Top3Tab({ data, stations, colorsByDefect, title }) {
                   <Empty />
                 )}
               </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Top</th>
-                      <th>Class Name</th>
-                      <th>NOK acumulado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {totals.length ? totals.map((row, index) => (
-                      <tr key={`${station}-${row.class_name}`}>
-                        <td>{row.class_rank || index + 1}</td>
-                        <td>{row.class_name}</td>
-                        <td>{numberFormat(row.total_nok_pieces)}</td>
-                      </tr>
-                    )) : (
+              <TableToggle label="View data table">
+                <div className="table-wrap">
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan="3" className="empty-cell">Sin datos</td>
+                        <th>Top</th>
+                        <th>Class Name</th>
+                        <th>Cumulative NOK</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {totals.length ? totals.map((row, index) => (
+                        <tr key={`${station}-${row.class_name}`}>
+                          <td>{row.class_rank || index + 1}</td>
+                          <td>{row.class_name}</td>
+                          <td>{numberFormat(row.total_nok_pieces)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan="3" className="empty-cell">No data</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TableToggle>
             </section>
           );
         }) : <Empty />}
@@ -685,50 +1063,573 @@ function Top3Tab({ data, stations, colorsByDefect, title }) {
   );
 }
 
-function MultiSelect({ options, value, onChange, getLabel = (item) => item, searchPlaceholder, selectedText = "seleccionados" }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const selected = new Set(value || []);
-  const filtered = options.filter((item) => getLabel(item).toLowerCase().includes(search.trim().toLowerCase()));
-  const label = selected.size ? `${selected.size} ${selectedText}` : "Todas";
+function headOptions(options) {
+  const stations = [...(options?.source_stations || [])].filter(Boolean);
+  const byPair = groupBy(stations.map((station) => ({ station, pair: stationPairFromStation(station) })), "pair");
+  return Object.entries(byPair)
+    .map(([pair, items]) => ({ pair, stations: items.map((item) => item.station).sort() }))
+    .sort((a, b) => stationPairName(a.pair).localeCompare(stationPairName(b.pair)));
+}
 
-  function toggle(item) {
-    const next = new Set(selected);
-    if (next.has(item)) next.delete(item);
-    else next.add(item);
-    onChange([...next].sort((a, b) => getLabel(a).localeCompare(getLabel(b))));
+function Sidebar({
+  options,
+  viewLevel,
+  onSelectOverall,
+  onSelectMachine,
+  onSelectHead,
+  filters,
+  onUpdateFilter,
+  onApplyFilters,
+  loading,
+  onOpenGlidepath,
+  onOpenChangeLog
+}) {
+  const [machineOpen, setMachineOpen] = useState(true);
+  const [headOpen, setHeadOpen] = useState(false);
+  const pairs = stationPairOptions(options);
+  const heads = headOptions(options);
+
+  return (
+    <nav className="sidebar" aria-label="View level">
+      <div className="sidebar-brand">
+        <Activity size={17} />
+        Vision
+      </div>
+
+      <div className="nav-group">
+        <button type="button" className={`nav-item ${viewLevel.type === "overall" ? "active" : ""}`} onClick={onSelectOverall}>
+          <span className="nav-item-label"><Layers size={15} /> Overall</span>
+        </button>
+
+        <button type="button" className="nav-item" onClick={() => setMachineOpen((v) => !v)}>
+          <span className="nav-item-label">Machine</span>
+          <ChevronDown size={14} style={{ transform: machineOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+        </button>
+        {machineOpen ? (
+          <div className="nav-subgroup">
+            <button
+              type="button"
+              className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL ? "active" : ""}`}
+              onClick={() => onSelectMachine(MACHINE_ALL)}
+            >
+              <span>All</span>
+            </button>
+            {pairs.length ? pairs.map((pair) => (
+              <button
+                key={pair}
+                type="button"
+                className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === pair ? "active" : ""}`}
+                onClick={() => onSelectMachine(pair)}
+              >
+                <span>{stationPairName(pair)}</span>
+              </button>
+            )) : <span className="nav-subitem">No data</span>}
+          </div>
+        ) : null}
+
+        <button type="button" className="nav-item" onClick={() => setHeadOpen((v) => !v)}>
+          <span className="nav-item-label">Head</span>
+          <ChevronDown size={14} style={{ transform: headOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+        </button>
+        {headOpen ? (
+          <div className="nav-subgroup">
+            {heads.length ? heads.map((group) => (
+              <button
+                key={group.pair}
+                type="button"
+                className={`nav-subitem ${viewLevel.type === "head" && viewLevel.pair === group.pair ? "active" : ""}`}
+                onClick={() => onSelectHead(group.pair)}
+              >
+                <span>{stationPairName(group.pair)}</span>
+              </button>
+            )) : <span className="nav-subitem">No data</span>}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="sidebar-filters">
+        <label>
+          Start
+          <input type="datetime-local" value={filters.start_at} onChange={(event) => onUpdateFilter("start_at", event.target.value)} />
+        </label>
+        <label>
+          End
+          <input type="datetime-local" value={filters.end_at} onChange={(event) => onUpdateFilter("end_at", event.target.value)} />
+        </label>
+        <div className="filter-actions">
+          <button type="button" className="button-primary" onClick={onApplyFilters} disabled={loading} title="Apply filters">
+            <RefreshCw size={17} />
+            {loading ? "Applying" : "Apply"}
+          </button>
+        </div>
+      </div>
+
+      <div className="sidebar-glidepath">
+        <button type="button" className="nav-item" onClick={onOpenGlidepath}>
+          <span className="nav-item-label"><Flag size={15} /> Glidepath Projects</span>
+        </button>
+        <button type="button" className="nav-item" onClick={onOpenChangeLog}>
+          <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+function NewMilestoneForm({ onCreate }) {
+  const [targetDate, setTargetDate] = useState("");
+  const [targetPct, setTargetPct] = useState("");
+  const [label, setLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!targetDate || targetPct === "") return;
+    setSaving(true);
+    try {
+      await onCreate({ target_date: targetDate, target_pct_nok: Number(targetPct), label: label || null });
+      setTargetDate("");
+      setTargetPct("");
+      setLabel("");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="multi-select" onBlur={(event) => {
-      if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-    }}>
-      <button type="button" className="multi-select-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
-        <span>{label}</span>
-        <ChevronDown size={16} />
+    <form className="milestone-form" onSubmit={submit}>
+      <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} required />
+      <input type="number" step="0.1" min="0" placeholder="Target % NOK" value={targetPct} onChange={(e) => setTargetPct(e.target.value)} required />
+      <input type="text" placeholder="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+      <button type="submit" className="small-button button-primary" disabled={saving}>
+        <Plus size={13} /> Add
       </button>
-      {open ? (
-        <div className="multi-select-menu">
-          <label className="search-box">
-            <Search size={15} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} />
-          </label>
-          <div className="multi-select-actions">
-            <button type="button" className="small-button" onClick={() => onChange([])}>Todas</button>
-            <button type="button" className="small-button" onClick={() => onChange(options)}>Seleccionar todas</button>
-          </div>
-          <div className="multi-select-options">
-            {filtered.length ? filtered.map((item) => (
-              <label className="check-option" key={item}>
-                <input type="checkbox" checked={selected.has(item)} onChange={() => toggle(item)} />
-                <span>{getLabel(item)}</span>
-              </label>
-            )) : <div className="empty-option">Sin coincidencias</div>}
-          </div>
+    </form>
+  );
+}
+
+function SubprojectCard({ subproject, pairOptions, onUpdate, onDelete, onAddMilestone, onDeleteMilestone }) {
+  const milestones = [...(subproject.milestones || [])].sort((a, b) => a.target_date.localeCompare(b.target_date));
+
+  function toggleStation(pair) {
+    const current = new Set(subproject.station_pairs || []);
+    if (current.has(pair)) current.delete(pair);
+    else current.add(pair);
+    onUpdate({ station_pairs: [...current] });
+  }
+
+  return (
+    <div className="subproject-card">
+      <div className="subproject-card-head">
+        <input
+          className="inline-input"
+          value={subproject.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          onBlur={(e) => onUpdate({ name: e.target.value })}
+        />
+        <select value={subproject.status} onChange={(e) => onUpdate({ status: e.target.value })}>
+          <option value="active">Active</option>
+          <option value="completed">Completed</option>
+          <option value="archived">Archived</option>
+        </select>
+        <button type="button" className="icon-button" onClick={onDelete} aria-label="Delete subproject">
+          <Trash2 size={15} />
+        </button>
+      </div>
+
+      <div className="subproject-field">
+        <span className="subproject-field-label">Machines</span>
+        <div className="station-chip-row">
+          {pairOptions.map((pair) => (
+            <button
+              type="button"
+              key={pair}
+              className={`station-chip ${(subproject.station_pairs || []).includes(pair) ? "active" : ""}`}
+              onClick={() => toggleStation(pair)}
+            >
+              {stationPairName(pair)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="subproject-field-row">
+        <label>
+          Start date
+          <input type="date" value={subproject.start_date} onChange={(e) => onUpdate({ start_date: e.target.value })} />
+        </label>
+        <label>
+          Start % NOK
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={subproject.start_pct_nok}
+            onChange={(e) => onUpdate({ start_pct_nok: Number(e.target.value) })}
+          />
+        </label>
+      </div>
+
+      <div className="subproject-field">
+        <span className="subproject-field-label">Milestones</span>
+        {milestones.length ? (
+          <ul className="milestone-list">
+            {milestones.map((milestone) => (
+              <li key={milestone.id}>
+                <span className="milestone-date">{milestone.target_date}</span>
+                <span className="milestone-target">{milestone.target_pct_nok}% NOK</span>
+                {milestone.label ? <span className="milestone-label">{milestone.label}</span> : null}
+                <button type="button" className="icon-button" onClick={() => onDeleteMilestone(milestone.id)} aria-label="Delete milestone">
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="milestone-empty">No milestones yet</span>
+        )}
+        <NewMilestoneForm onCreate={onAddMilestone} />
+      </div>
+    </div>
+  );
+}
+
+function NewSubprojectForm({ pairOptions, onCreate }) {
+  const [name, setName] = useState("");
+  const [selectedPairs, setSelectedPairs] = useState([]);
+  const [startDate, setStartDate] = useState("");
+  const [startPct, setStartPct] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function toggleStation(pair) {
+    setSelectedPairs((current) => (current.includes(pair) ? current.filter((p) => p !== pair) : [...current, pair]));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!name.trim() || !selectedPairs.length || !startDate || startPct === "") return;
+    setSaving(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        station_pairs: selectedPairs,
+        start_date: startDate,
+        start_pct_nok: Number(startPct)
+      });
+      setName("");
+      setSelectedPairs([]);
+      setStartDate("");
+      setStartPct("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="new-subproject-form" onSubmit={submit}>
+      <input type="text" placeholder="Subproject name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <div className="station-chip-row">
+        {pairOptions.map((pair) => (
+          <button
+            type="button"
+            key={pair}
+            className={`station-chip ${selectedPairs.includes(pair) ? "active" : ""}`}
+            onClick={() => toggleStation(pair)}
+          >
+            {stationPairName(pair)}
+          </button>
+        ))}
+      </div>
+      <div className="subproject-field-row">
+        <label>
+          Start date
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
+        </label>
+        <label>
+          Start % NOK
+          <input type="number" step="0.1" min="0" placeholder="e.g. 4.8" value={startPct} onChange={(e) => setStartPct(e.target.value)} required />
+        </label>
+      </div>
+      <button type="submit" className="button-primary" disabled={saving}>
+        <Plus size={15} /> Add Subproject
+      </button>
+    </form>
+  );
+}
+
+function ProjectCard({ project, pairOptions, onRefresh }) {
+  const [expanded, setExpanded] = useState(true);
+
+  async function updateSubproject(subprojectId, patch) {
+    await apiRequest(`/api/v1/glidepath/subprojects/${subprojectId}`, { method: "PATCH", body: JSON.stringify(patch) });
+    onRefresh();
+  }
+
+  async function deleteSubproject(subprojectId) {
+    await apiRequest(`/api/v1/glidepath/subprojects/${subprojectId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  async function addMilestone(subprojectId, payload) {
+    await apiRequest(`/api/v1/glidepath/subprojects/${subprojectId}/milestones`, { method: "POST", body: JSON.stringify(payload) });
+    onRefresh();
+  }
+
+  async function deleteMilestone(milestoneId) {
+    await apiRequest(`/api/v1/glidepath/milestones/${milestoneId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  async function createSubproject(payload) {
+    await apiRequest(`/api/v1/glidepath/projects/${project.id}/subprojects`, { method: "POST", body: JSON.stringify(payload) });
+    onRefresh();
+  }
+
+  async function deleteProject() {
+    await apiRequest(`/api/v1/glidepath/projects/${project.id}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  return (
+    <div className="project-card">
+      <div className="project-card-head">
+        <button type="button" className="project-card-title" onClick={() => setExpanded((v) => !v)}>
+          <ChevronDown size={15} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+          <span>{project.name}</span>
+          <span className="nav-badge">{(project.subprojects || []).length}</span>
+        </button>
+        <button type="button" className="icon-button" onClick={deleteProject} aria-label="Delete project">
+          <Trash2 size={15} />
+        </button>
+      </div>
+      {expanded ? (
+        <div className="project-card-body">
+          {(project.subprojects || []).map((subproject) => (
+            <SubprojectCard
+              key={subproject.id}
+              subproject={subproject}
+              pairOptions={pairOptions}
+              onUpdate={(patch) => updateSubproject(subproject.id, patch)}
+              onDelete={() => deleteSubproject(subproject.id)}
+              onAddMilestone={(payload) => addMilestone(subproject.id, payload)}
+              onDeleteMilestone={deleteMilestone}
+            />
+          ))}
+          <NewSubprojectForm pairOptions={pairOptions} onCreate={createSubproject} />
         </div>
       ) : null}
     </div>
   );
+}
+
+function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
+  const [newProjectName, setNewProjectName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function createProject(event) {
+    event.preventDefault();
+    if (!newProjectName.trim()) return;
+    setSaving(true);
+    try {
+      await apiRequest("/api/v1/glidepath/projects", { method: "POST", body: JSON.stringify({ name: newProjectName.trim() }) });
+      setNewProjectName("");
+      onRefresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>Glidepath Projects</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <form className="new-project-form" onSubmit={createProject}>
+          <input type="text" placeholder="New project name" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
+          <button type="submit" className="button-primary" disabled={saving}>
+            <Plus size={15} /> Add Project
+          </button>
+        </form>
+
+        <div className="project-list">
+          {projects.length ? projects.map((project) => (
+            <ProjectCard key={project.id} project={project} pairOptions={pairOptions} onRefresh={onRefresh} />
+          )) : <div className="empty-option">No projects yet. Create one above.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewChangeLogForm({ pairOptions, onCreate }) {
+  const [stationPair, setStationPair] = useState(pairOptions[0] || "");
+  const [side, setSide] = useState("both");
+  const [changeDate, setChangeDate] = useState("");
+  const [changeTime, setChangeTime] = useState("");
+  const [category, setCategory] = useState(CHANGE_LOG_CATEGORIES[0]);
+  const [label, setLabel] = useState("");
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const isOther = category === "Other";
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!stationPair || !changeDate) return;
+    if (isOther && !label.trim()) return;
+    setSaving(true);
+    try {
+      await onCreate({
+        station_pair: stationPair,
+        side,
+        change_date: changeDate,
+        change_time: changeTime || null,
+        category,
+        label: isOther ? label.trim() : null,
+        description: description.trim() || null
+      });
+      setChangeDate("");
+      setChangeTime("");
+      setLabel("");
+      setDescription("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="new-change-log-form" onSubmit={submit}>
+      <div className="subproject-field-row">
+        <label>
+          Machine
+          <select value={stationPair} onChange={(e) => setStationPair(e.target.value)}>
+            {pairOptions.map((pair) => (
+              <option key={pair} value={pair}>{stationPairName(pair)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Side
+          <select value={side} onChange={(e) => setSide(e.target.value)}>
+            <option value="both">Both</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+      </div>
+      <div className="subproject-field-row">
+        <label>
+          Date
+          <input type="date" value={changeDate} onChange={(e) => setChangeDate(e.target.value)} required />
+        </label>
+        <label>
+          Time (optional)
+          <input type="time" value={changeTime} onChange={(e) => setChangeTime(e.target.value)} />
+        </label>
+      </div>
+      <label>
+        Category
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {CHANGE_LOG_CATEGORIES.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Label
+        <input
+          type="text"
+          placeholder={isOther ? "e.g. Fixture swap" : category}
+          value={isOther ? label : category}
+          onChange={(e) => setLabel(e.target.value)}
+          disabled={!isOther}
+          required={isOther}
+        />
+      </label>
+      <label>
+        {isOther ? "Description (optional)" : "Comments (optional)"}
+        <input type="text" placeholder="Details, work order, etc." value={description} onChange={(e) => setDescription(e.target.value)} />
+      </label>
+      <button type="submit" className="button-primary" disabled={saving}>
+        <Plus size={15} /> Log Change
+      </button>
+    </form>
+  );
+}
+
+function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
+  async function createEntry(payload) {
+    await apiRequest("/api/v1/change-log", { method: "POST", body: JSON.stringify(payload) });
+    onRefresh();
+  }
+
+  async function deleteEntry(entryId) {
+    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  const sortedEntries = [...entries].sort((a, b) => b.change_date.localeCompare(a.change_date));
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>Add Logs</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <NewChangeLogForm pairOptions={pairOptions} onCreate={createEntry} />
+
+        <div className="change-log-table">
+          {sortedEntries.length ? sortedEntries.map((entry) => (
+            <div className="change-log-row" key={entry.id}>
+              <span className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</span>
+              <span className="change-log-row-machine">{stationPairName(entry.station_pair)}</span>
+              <span className="change-log-row-side">{entry.side}</span>
+              <span className="change-log-row-category">{entry.category}</span>
+              {entry.category === "Other" ? <span className="change-log-row-label">{entry.label}</span> : null}
+              {entry.description ? <span className="change-log-row-desc">{entry.description}</span> : null}
+              <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )) : <div className="empty-option">No logs yet. Add one above.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function filterDataToStations(data, allowedStations) {
+  if (!data) return data;
+  const allowed = new Set(allowedStations);
+  const keep = (rows = [], key = "source_station") => rows.filter((row) => allowed.has(row[key] || ""));
+  return {
+    ...data,
+    stations: keep(data.stations),
+    daily: keep(data.daily),
+    condition_periods: keep(data.condition_periods),
+    condition_totals: keep(data.condition_totals),
+    top3_history: keep(data.top3_history)
+  };
 }
 
 function App() {
@@ -742,9 +1643,14 @@ function App() {
   const [loadedData, setLoadedData] = useState(null);
   const [loadedServerFilters, setLoadedServerFilters] = useState(null);
   const [activeTab, setActiveTab] = useState("daily");
+  const [viewLevel, setViewLevel] = useState({ type: "overall" });
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
+  const [projects, setProjects] = useState([]);
+  const [showGlidepathManager, setShowGlidepathManager] = useState(false);
+  const [changeLogEntries, setChangeLogEntries] = useState([]);
+  const [showChangeLogManager, setShowChangeLogManager] = useState(false);
 
   useEffect(() => {
     fetchJson("/api/v1/options")
@@ -752,6 +1658,23 @@ function App() {
         setOptions(payload);
       })
       .catch((exc) => setError(exc.message));
+  }, []);
+
+  const reloadProjects = () => {
+    fetchJson("/api/v1/glidepath/projects")
+      .then((payload) => setProjects(payload.items || []))
+      .catch(() => {});
+  };
+
+  const reloadChangeLog = () => {
+    fetchJson("/api/v1/change-log")
+      .then((payload) => setChangeLogEntries(payload.items || []))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    reloadProjects();
+    reloadChangeLog();
   }, []);
 
   const apiFilters = useMemo(() => dashboardFilters(filters), [filters]);
@@ -821,98 +1744,188 @@ function App() {
     }
   }
 
-  const pairOptions = useMemo(() => stationPairOptions(options), [options]);
-  const partNumberOptions = useMemo(() => [...(options?.part_numbers || [])].filter(Boolean).sort(), [options]);
   const stations = stationList(visibleData);
   const combinedData = useMemo(() => combinedAsStationData(visibleData), [visibleData]);
   const combinedStations = stationList(combinedData);
-  const colorsByDefect = useMemo(() => defectColorMap(visibleData), [visibleData]);
-  const combinedColorsByDefect = useMemo(() => defectColorMap(combinedData), [combinedData]);
   const canDownloadExcel = Boolean(visibleData) && !loading && !exporting && sameFilters(apiFilters, appliedFilters);
 
+  function selectMachine(pair) {
+    setViewLevel({ type: "machine", pair });
+    const nextStationPairs = pair && pair !== MACHINE_ALL ? [pair] : [];
+    setFilters((current) => ({ ...current, station_pairs: nextStationPairs }));
+    applyFilters({ ...filters, station_pairs: nextStationPairs });
+  }
+
+  function selectHead(pair) {
+    setViewLevel({ type: "head", pair });
+    setFilters((current) => ({ ...current, station_pairs: [pair] }));
+    applyFilters({ ...filters, station_pairs: [pair] });
+  }
+
+  function selectOverall() {
+    setViewLevel({ type: "overall" });
+    setFilters((current) => ({ ...current, station_pairs: [] }));
+    applyFilters({ ...filters, station_pairs: [] });
+  }
+
+  const showByHead = viewLevel.type === "head";
+  const showAllMachines = viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL;
+  const showOverall = viewLevel.type === "overall";
+  const leftStation = showByHead ? stations.find((s) => /LEFT$/i.test(s)) : null;
+  const rightStation = showByHead ? stations.find((s) => /RIGHT$/i.test(s)) : null;
+  const leftData = useMemo(() => (showByHead ? filterDataToStations(visibleData, [leftStation]) : null), [showByHead, visibleData, leftStation]);
+  const rightData = useMemo(() => (showByHead ? filterDataToStations(visibleData, [rightStation]) : null), [showByHead, visibleData, rightStation]);
+  const overallData = useMemo(() => (showOverall ? plantWideData(combinedData) : null), [showOverall, combinedData]);
+  const overallStations = stationList(overallData);
+  const colorsByDefect = useMemo(() => defectColorMap(visibleData), [visibleData]);
+  const combinedColorsByDefect = useMemo(() => defectColorMap(combinedData), [combinedData]);
+  const overallColorsByDefect = useMemo(() => defectColorMap(overallData), [overallData]);
+
+  const levelTitle = showOverall
+    ? "Overall · Whole Plant"
+    : viewLevel.type === "machine"
+      ? `Machine · ${showAllMachines ? "All Machines" : stationPairName(viewLevel.pair)}`
+      : `Head · ${stationPairName(viewLevel.pair)}`;
+
+  const displayData = showByHead ? visibleData : showOverall ? overallData : combinedData;
+  const displayStations = showByHead ? stations : showOverall ? overallStations : combinedStations;
+  const displayColors = showByHead ? colorsByDefect : showOverall ? overallColorsByDefect : combinedColorsByDefect;
+
+  const glidepathScopeStations = showByHead ? stations : combinedStations;
+  const activeSubprojects = useMemo(
+    () => findActiveSubprojects(projects, glidepathScopeStations),
+    [projects, glidepathScopeStations.join("|")]
+  );
+  const leftSubprojects = showByHead ? findActiveSubprojects(projects, [leftStation]) : [];
+  const rightSubprojects = showByHead ? findActiveSubprojects(projects, [rightStation]) : [];
+
+  const scopedChangeLogEntries = useMemo(
+    () => findChangeLogEntries(changeLogEntries, glidepathScopeStations),
+    [changeLogEntries, glidepathScopeStations.join("|")]
+  );
+  const leftChangeLogEntries = showByHead ? findChangeLogEntries(changeLogEntries, [leftStation]) : [];
+  const rightChangeLogEntries = showByHead ? findChangeLogEntries(changeLogEntries, [rightStation]) : [];
+
   return (
-    <main>
-      <header className="topbar">
-        <div>
-          <h1>Reject Summary</h1>
-          <p>Analisis por Tesla / lado, condicion y Top 3 historico</p>
-        </div>
-        <div className="actions">
-          <button type="button" className="button-success" onClick={downloadExcel} disabled={!canDownloadExcel} title="Descargar Excel">
-            <Download size={17} />
-            {exporting ? "Exportando" : "Excel"}
-          </button>
-        </div>
-      </header>
+    <div className="app-shell">
+      <Sidebar
+        options={options}
+        viewLevel={viewLevel}
+        onSelectOverall={selectOverall}
+        onSelectMachine={selectMachine}
+        onSelectHead={selectHead}
+        filters={filters}
+        onUpdateFilter={updateFilter}
+        onApplyFilters={() => applyFilters()}
+        loading={loading}
+        onOpenGlidepath={() => setShowGlidepathManager(true)}
+        onOpenChangeLog={() => setShowChangeLogManager(true)}
+      />
+      {showGlidepathManager ? (
+        <GlidepathManager
+          projects={projects}
+          pairOptions={stationPairOptions(options)}
+          onClose={() => setShowGlidepathManager(false)}
+          onRefresh={reloadProjects}
+        />
+      ) : null}
+      {showChangeLogManager ? (
+        <ChangeLogManager
+          entries={changeLogEntries}
+          pairOptions={stationPairOptions(options)}
+          onClose={() => setShowChangeLogManager(false)}
+          onRefresh={reloadChangeLog}
+        />
+      ) : null}
+      <main>
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">Vision · Quality Analytics</span>
+            <h1>Reject Summary</h1>
+            <p>{levelTitle}</p>
+          </div>
+          <div className="actions">
+            <button type="button" className="button-success" onClick={downloadExcel} disabled={!canDownloadExcel} title="Download Excel">
+              <Download size={17} />
+              {exporting ? "Exporting" : "Excel"}
+            </button>
+          </div>
+        </header>
 
-      <section className="filters compact">
-        <label>
-          Inicio
-          <input type="datetime-local" value={filters.start_at} onChange={(event) => updateFilter("start_at", event.target.value)} />
-        </label>
-        <label>
-          Fin
-          <input type="datetime-local" value={filters.end_at} onChange={(event) => updateFilter("end_at", event.target.value)} />
-        </label>
-        <div className="station-filter">
-          <span>Estacion</span>
-          <MultiSelect
-            options={pairOptions}
-            value={filters.station_pairs}
-            onChange={(value) => updateFilter("station_pairs", value)}
-            getLabel={stationPairName}
-            searchPlaceholder="Buscar estacion"
-            selectedText="seleccionadas"
+        {visibleData && !showByHead ? <KpiRow data={displayData} stationCount={displayStations.length} /> : null}
+
+        {viewLevel.type === "overall" && visibleData ? (
+          <section className="overview-grid">
+            {combinedStations.map((pair) => {
+              const row = (combinedData?.stations || []).find((item) => item.source_station === pair);
+              const pctNok = Number(row?.pct_nok || 0);
+              const status = pctNok === 0 ? "ok" : pctNok < 0.02 ? "warn" : "bad";
+              return (
+                <button type="button" key={pair} className="overview-card" onClick={() => selectMachine(pair)}>
+                  <div className="overview-card-head">
+                    <span className="overview-card-title">{stationPairName(pair)}</span>
+                    <span className={`status-dot ${status}`} />
+                  </div>
+                  <span className="overview-card-rate">{percentFormat(1 - pctNok)} OK</span>
+                  <div className="overview-card-bar">
+                    <div className="overview-card-bar-fill" style={{ width: `${Math.max(0, Math.min(100, (1 - pctNok) * 100))}%` }} />
+                  </div>
+                  <div className="overview-card-sub">
+                    <span>{numberFormat(row?.total_pieces)} pieces</span>
+                    <span>{numberFormat(row?.nok_pieces)} NOK</span>
+                  </div>
+                </button>
+              );
+            })}
+          </section>
+        ) : null}
+
+        {error ? <div className="error">{error}</div> : null}
+        {loading ? <div className="loading">Loading data...</div> : null}
+
+        <nav className="tabs" aria-label="Reject summary tabs">
+          {TABS.map((tab) => (
+            <TabButton key={tab.id} tab={tab} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} />
+          ))}
+        </nav>
+
+        {visibleData && showByHead ? (
+          <div className="head-columns">
+            <div className="head-column">
+              <SectionTitle>{stationName(leftStation) || "Left"}</SectionTitle>
+              <KpiRow data={leftData} stationCount={leftStation ? 1 : 0} />
+              {activeTab === "daily" ? <DailyTab data={leftData} stations={[leftStation]} glidepathSubprojects={leftSubprojects} changeLogEntries={leftChangeLogEntries} /> : null}
+              {activeTab === "conditions" ? <ConditionsTab data={leftData} stations={[leftStation]} colorsByDefect={colorsByDefect} /> : null}
+              {activeTab === "top3" ? <Top3Tab data={leftData} stations={[leftStation]} colorsByDefect={colorsByDefect} /> : null}
+            </div>
+            <div className="head-column">
+              <SectionTitle>{stationName(rightStation) || "Right"}</SectionTitle>
+              <KpiRow data={rightData} stationCount={rightStation ? 1 : 0} />
+              {activeTab === "daily" ? <DailyTab data={rightData} stations={[rightStation]} glidepathSubprojects={rightSubprojects} changeLogEntries={rightChangeLogEntries} /> : null}
+              {activeTab === "conditions" ? <ConditionsTab data={rightData} stations={[rightStation]} colorsByDefect={colorsByDefect} /> : null}
+              {activeTab === "top3" ? <Top3Tab data={rightData} stations={[rightStation]} colorsByDefect={colorsByDefect} /> : null}
+            </div>
+          </div>
+        ) : null}
+
+        {visibleData && !showByHead && activeTab === "daily" ? (
+          <DailyTab
+            data={displayData}
+            stations={displayStations}
+            showPartNumberBands={viewLevel.type !== "overall"}
+            glidepathSubprojects={activeSubprojects}
+            changeLogEntries={scopedChangeLogEntries}
           />
-          <span className="filter-hint">Selecciona estaciones base; cada una incluye LEFT y RIGHT.</span>
-        </div>
-        <div className="station-filter">
-          <span>Part Number</span>
-          <MultiSelect
-            options={partNumberOptions}
-            value={filters.part_numbers}
-            onChange={(value) => updateFilter("part_numbers", value)}
-            searchPlaceholder="Buscar part number"
-          />
-          <span className="filter-hint">Selecciona uno o mas numeros de parte.</span>
-        </div>
-      </section>
-      <div className="filter-actions">
-        <button type="button" className="button-primary" onClick={() => applyFilters()} disabled={loading} title="Aplicar filtros">
-          <RefreshCw size={17} />
-          {loading ? "Aplicando" : "Aplicar"}
-        </button>
-      </div>
-
-      {error ? <div className="error">{error}</div> : null}
-      {loading ? <div className="loading">Cargando datos...</div> : null}
-
-      <nav className="tabs" aria-label="Reject summary tabs">
-        {TABS.map((tab) => (
-          <TabButton key={tab.id} tab={tab} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} />
-        ))}
-      </nav>
-
-      {visibleData && activeTab === "daily" ? (
-        <>
-          <DailyTab data={visibleData} stations={stations} title="Por lado" />
-          {combinedData ? <DailyTab data={combinedData} stations={combinedStations} title="Combinado LEFT+RIGHT" /> : null}
-        </>
-      ) : null}
-      {visibleData && activeTab === "conditions" ? (
-        <>
-          <ConditionsTab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} title="Por lado" />
-          {combinedData ? <ConditionsTab data={combinedData} stations={combinedStations} colorsByDefect={combinedColorsByDefect} title="Combinado LEFT+RIGHT" /> : null}
-        </>
-      ) : null}
-      {visibleData && activeTab === "top3" ? (
-        <>
-          <Top3Tab data={visibleData} stations={stations} colorsByDefect={colorsByDefect} title="Por lado" />
-          {combinedData ? <Top3Tab data={combinedData} stations={combinedStations} colorsByDefect={combinedColorsByDefect} title="Combinado LEFT+RIGHT" /> : null}
-        </>
-      ) : null}
-      {!visibleData && !loading ? <Empty label="Sin datos cargados" /> : null}
-    </main>
+        ) : null}
+        {visibleData && !showByHead && activeTab === "conditions" ? (
+          <ConditionsTab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
+        ) : null}
+        {visibleData && !showByHead && activeTab === "top3" ? (
+          <Top3Tab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
+        ) : null}
+        {!visibleData && !loading ? <Empty label="No data loaded" /> : null}
+      </main>
+    </div>
   );
 }
 

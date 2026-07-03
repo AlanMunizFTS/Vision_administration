@@ -128,7 +128,7 @@ def _date_label(value):
 def _station_name(value):
     text = str(value or "").strip()
     if not text:
-        return "Sin estacion"
+        return "No station"
 
     match = re.search(r"(?:\s*-\s*|_)(LEFT|RIGHT)$", text, re.IGNORECASE)
     raw_base = text[: match.start()].strip(" _-") if match else text
@@ -232,7 +232,7 @@ def _append_table(sheet, table_name, headers, rows, start_row=None, start_col=1)
         start_row = 1
     rows = list(rows or [])
     if not rows:
-        rows = [["Sin datos", *[""] * (len(headers) - 1)]]
+        rows = [["No data", *[""] * (len(headers) - 1)]]
 
     for offset, value in enumerate(headers):
         sheet.cell(row=start_row, column=start_col + offset, value=value)
@@ -543,7 +543,7 @@ def _add_condition_pie_chart(sheet, label, classes, header_row, total_row, color
 
     class_end_col = 1 + len(classes)
     chart = PieChart()
-    chart.title = f"{label} - Rechazos por clase"
+    chart.title = f"{label} - Rejects by Class"
     chart.height = 8
     chart.width = 12
     chart.add_data(
@@ -579,9 +579,9 @@ def _add_top3_condition_chart(sheet, condition_meta, classes, colors_by_defect, 
 
     condition_sheet = condition_meta["sheet"]
     chart = BarChart()
-    chart.title = f"{condition_meta['label']} - Top 3 historico"
+    chart.title = f"{condition_meta['label']} - Top 3 History"
     chart.y_axis.title = "NOK"
-    chart.x_axis.title = "Fecha"
+    chart.x_axis.title = "Date"
     chart.y_axis.scaling.min = 0
     chart.y_axis.scaling.max = _top_condition_axis_max(condition_meta, classes)
     chart.y_axis.number_format = "0"
@@ -625,27 +625,27 @@ def _format_percentage_columns(sheet, columns, start_row=2):
 
 
 DAILY_METRICS = ("OK", "NOK", "Total", "% OK", "% NOK")
-DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combinado")
+DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combined")
 DAILY_FILTER_ROWS = 4
 
 
 def _filter_value(value):
     text = str(value or "").strip()
-    return text or "Todos"
+    return text or "All"
 
 
 def _filter_list_value(values):
     cleaned = [str(value).strip() for value in values or [] if str(value or "").strip()]
-    return ", ".join(cleaned) if cleaned else "Todos"
+    return ", ".join(cleaned) if cleaned else "All"
 
 
 def _write_filter_band(sheet, report_params):
     title_fill = PatternFill(fill_type="solid", fgColor="E8EEF5")
     label_font = Font(bold=True)
     rows = [
-        ("Filtros aplicados", ""),
-        (f"Inicio: {_filter_value(report_params.start_at)}", f"Fin: {_filter_value(report_params.end_at)}"),
-        (f"Estacion: {_filter_value(report_params.source_station)}", f"Part Number: {_filter_list_value(report_params.part_numbers)}"),
+        ("Applied Filters", ""),
+        (f"Start: {_filter_value(report_params.start_at)}", f"End: {_filter_value(report_params.end_at)}"),
+        (f"Station: {_filter_value(report_params.source_station)}", f"Part Number: {_filter_list_value(report_params.part_numbers)}"),
     ]
 
     sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
@@ -717,16 +717,16 @@ def _daily_layout(data):
             continue
         dates.add(day)
         groups.setdefault(base, {"blocks": set(), "has_standard_side": False})
-        groups[base]["blocks"].add("Combinado")
-        by_block_date[(base, "Combinado", day)] = row
+        groups[base]["blocks"].add("Combined")
+        by_block_date[(base, "Combined", day)] = row
 
     ordered_groups = []
     for base in sorted(groups, key=_station_name):
         info = groups[base]
-        if info["has_standard_side"] or "Combinado" in info["blocks"]:
-            blocks = [block for block in DAILY_STANDARD_BLOCKS if block in info["blocks"] or block != "Combinado"]
-            if "Combinado" not in blocks:
-                blocks.append("Combinado")
+        if info["has_standard_side"] or "Combined" in info["blocks"]:
+            blocks = [block for block in DAILY_STANDARD_BLOCKS if block in info["blocks"] or block != "Combined"]
+            if "Combined" not in blocks:
+                blocks.append("Combined")
         else:
             blocks = sorted(info["blocks"], key=_station_name)
         ordered_groups.append((base, blocks))
@@ -748,7 +748,7 @@ def _apply_daily_border(sheet, min_row, max_row, min_col, max_col):
 
 def _write_daily_sheet(workbook, data, report_params):
     sheet = workbook.active
-    sheet.title = "Por dia"
+    sheet.title = "By Day"
     _write_filter_band(sheet, report_params)
     dates, groups, by_block_date = _daily_layout(data)
     header_fill = PatternFill(fill_type="solid", fgColor="404040")
@@ -847,15 +847,15 @@ def _write_daily_sheet(workbook, data, report_params):
         _apply_daily_border(sheet, data_start_row, data_end_row, 1, max_col)
 
     if not groups:
-        sheet.cell(row=data_start_row, column=1, value="Sin datos")
+        sheet.cell(row=data_start_row, column=1, value="No data")
         _fit_columns(sheet)
         return sheet
 
     if dates and series_cols:
         chart = LineChart()
-        chart.title = "Tasa de rechazo (% NOK) por dia"
+        chart.title = "Reject Rate (% NOK) by Day"
         chart.y_axis.title = "% NOK"
-        chart.x_axis.title = "Fecha"
+        chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
         chart.y_axis.scaling.max = 1
         chart.height = 7.5
@@ -878,7 +878,7 @@ def _append_combined_daily_section(sheet, data):
         return
 
     row_cursor = sheet.max_row + 3
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Por dia")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - By Day")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 1
 
@@ -890,7 +890,7 @@ def _append_combined_daily_section(sheet, data):
         for row in daily_rows
     }
 
-    headers = ["Fecha"]
+    headers = ["Date"]
     for station in stations:
         label = _station_name(station)
         headers.extend([f"{label} OK", f"{label} NOK", f"{label} Total", f"{label} % OK", f"{label} % NOK"])
@@ -915,17 +915,17 @@ def _append_combined_daily_section(sheet, data):
         rows.append(output)
 
     if not headers[1:]:
-        headers = ["Fecha", "Sin datos"]
-    header_row, max_row, _ = _append_table(sheet, "tblPorDiaCombinado", headers, rows, start_row=row_cursor)
+        headers = ["Date", "No data"]
+    header_row, max_row, _ = _append_table(sheet, "tblCombinedByDay", headers, rows, start_row=row_cursor)
     percent_cols = [5 + (idx * 5) for idx in range(len(stations))]
     percent_cols.extend([6 + (idx * 5) for idx in range(len(stations))])
     _format_percentage_columns(sheet, percent_cols, start_row=header_row + 1)
 
     if rows and stations:
         chart = LineChart()
-        chart.title = "Combinado LEFT+RIGHT - Tasa de rechazo (% NOK) por dia"
+        chart.title = "Combined LEFT+RIGHT - Reject Rate (% NOK) by Day"
         chart.y_axis.title = "% NOK"
-        chart.x_axis.title = "Fecha"
+        chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
         chart.y_axis.scaling.max = 1
         chart.height = 9
@@ -947,19 +947,19 @@ def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=N
     row_cursor = 1
 
     if not stations:
-        _append_table(sheet, "tblConditionEmpty", ["Fecha", "Total NOK"], [])
+        _append_table(sheet, "tblConditionEmpty", ["Date", "Total NOK"], [])
         _fit_columns(sheet)
         return sheet
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defects Day by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
-        headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
+        headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
@@ -1004,19 +1004,19 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect, condition
 
     periods_by_station = _group_by(combined_data.get("condition_periods") or [], "source_station")
     row_cursor = sheet.max_row + 3
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Per Condition")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - Per Condition")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 2
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defects Day by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
-        headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
+        headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
@@ -1051,13 +1051,13 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect, condition
 
 
 def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
-    sheet = workbook.create_sheet("Top 3 Historico")
+    sheet = workbook.create_sheet("Top 3 History")
     condition_ranges = condition_ranges or {}
     stations = sorted(condition_ranges, key=_station_name)
     row_cursor = 1
 
     if not stations:
-        _append_table(sheet, "tblTop3Empty", ["Top", "Class Name", "NOK acumulado"], [])
+        _append_table(sheet, "tblTop3Empty", ["Top", "Class Name", "Cumulative NOK"], [])
         _fit_columns(sheet)
         return sheet
 
@@ -1066,7 +1066,7 @@ def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
         label = condition_meta["label"]
         classes = _top_condition_classes(condition_meta)
 
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
@@ -1077,7 +1077,7 @@ def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
         summary_header, summary_max_row, _ = _append_table(
             sheet,
             f"tblTop3Totals{station_idx}",
-            ["Top", "Class Name", "NOK acumulado"],
+            ["Top", "Class Name", "Cumulative NOK"],
             summary_rows,
             start_row=row_cursor,
         )
@@ -1103,7 +1103,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         return
 
     row_cursor = max(sheet.max_row + 3, getattr(sheet, "_top3_next_row", 0))
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Top 3 Historico")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - Top 3 History")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 2
 
@@ -1112,7 +1112,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         label = condition_meta["label"]
         classes = _top_condition_classes(condition_meta)
 
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
@@ -1120,7 +1120,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         summary_header, summary_max_row, _ = _append_table(
             sheet,
             f"tblCombinedTop3Totals{station_idx}",
-            ["Top", "Class Name", "NOK acumulado"],
+            ["Top", "Class Name", "Cumulative NOK"],
             summary_rows,
             start_row=row_cursor,
         )
@@ -1190,7 +1190,7 @@ def main(argv=None):
         print(f"Error: {exc}")
         return 1
 
-    print(f"Reporte generado: {output_path}")
+    print(f"Report generated: {output_path}")
     return 0
 
 

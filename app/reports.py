@@ -168,8 +168,22 @@ def build_combined_piece_filters(start_at=None, end_at=None, source_station=None
     return where_sql, params
 
 
-def piece_cte():
-    return f"""
+def piece_cte(start_at=None, end_at=None):
+    raw_filters = []
+    raw_params = []
+    parsed_start = parse_datetime_param(start_at, "start_at")
+    parsed_end = parse_datetime_param(end_at, "end_at")
+    if parsed_start is not None:
+        raw_filters.append(f"({CAPTURED_AT_EXPR}) >= %s")
+        raw_params.append(parsed_start)
+    if parsed_end is not None:
+        raw_filters.append(f"({CAPTURED_AT_EXPR}) <= %s")
+        raw_params.append(parsed_end)
+    raw_where_sql = ""
+    if raw_filters:
+        raw_where_sql = "WHERE " + " AND ".join(f"({item})" for item in raw_filters)
+
+    query = f"""
 WITH raw AS (
     SELECT
         central_id,
@@ -183,6 +197,7 @@ WITH raw AS (
         created_at,
         {CAPTURED_AT_EXPR} AS captured_at
     FROM {RESULTS_TABLE}
+    {raw_where_sql}
 ),
 ranked_defects AS (
     SELECT
@@ -222,11 +237,13 @@ pieces AS (
     GROUP BY raw.source_station, raw.jsn, selected.class_name, selected.confidence
 )
 """
+    return query, raw_params
 
 
-def combined_piece_cte():
-    return f"""
-{piece_cte()},
+def combined_piece_cte(start_at=None, end_at=None):
+    base_query, base_params = piece_cte(start_at=start_at, end_at=end_at)
+    query = f"""
+{base_query},
 combined_ranked_defects AS (
     SELECT
         {station_pair_expr("source_station")} AS station_pair,
@@ -278,6 +295,7 @@ combined_pieces AS (
     FROM combined_base
 )
 """
+    return query, base_params
 
 
 def get_health(db):
@@ -356,15 +374,16 @@ def get_pieces(
         source_station=source_station,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT *
     FROM pieces
     {where_sql}
     ORDER BY captured_at DESC NULLS LAST, created_at_last DESC NULLS LAST, jsn DESC
     LIMIT %s OFFSET %s
     """
-    rows = db.fetch(query, [*params, limit, offset])
+    rows = db.fetch(query, [*cte_params, *params, limit, offset])
     return {"items": [normalize_row(row) for row in rows], "limit": limit, "offset": offset}
 
 
@@ -375,8 +394,9 @@ def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=N
         source_station=source_station,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         COUNT(*) AS total_pieces,
         COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
@@ -386,7 +406,7 @@ def get_summary(db, start_at=None, end_at=None, source_station=None, source_id=N
     FROM pieces
     {where_sql}
     """
-    return normalize_row(db.fetch_one(query, params) or {})
+    return normalize_row(db.fetch_one(query, [*cte_params, *params]) or {})
 
 
 def get_station_summary(db, start_at=None, end_at=None, source_id=None):
@@ -395,8 +415,9 @@ def get_station_summary(db, start_at=None, end_at=None, source_id=None):
         end_at=end_at,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         source_station,
         COUNT(*) AS total_pieces,
@@ -409,7 +430,7 @@ def get_station_summary(db, start_at=None, end_at=None, source_id=None):
     GROUP BY source_station
     ORDER BY source_station ASC NULLS LAST
     """
-    return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
+    return {"items": [normalize_row(row) for row in db.fetch(query, [*cte_params, *params])]}
 
 
 def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=None):
@@ -419,8 +440,9 @@ def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=N
         source_station=source_station,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         {defect_name_expr("main_defect")} AS class_name,
         COUNT(*) AS piece_count,
@@ -432,7 +454,7 @@ def get_defects(db, start_at=None, end_at=None, source_station=None, source_id=N
     GROUP BY {defect_name_expr("main_defect")}
     ORDER BY class_name ASC
     """
-    return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
+    return {"items": [normalize_row(row) for row in db.fetch(query, [*cte_params, *params])]}
 
 
 def get_station_defects(db, start_at=None, end_at=None, source_id=None):
@@ -441,8 +463,9 @@ def get_station_defects(db, start_at=None, end_at=None, source_id=None):
         end_at=end_at,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         source_station,
         {defect_name_expr("main_defect")} AS class_name,
@@ -455,7 +478,7 @@ def get_station_defects(db, start_at=None, end_at=None, source_id=None):
     GROUP BY source_station, {defect_name_expr("main_defect")}
     ORDER BY source_station ASC NULLS LAST, class_name ASC
     """
-    return {"items": [normalize_row(row) for row in db.fetch(query, params)]}
+    return {"items": [normalize_row(row) for row in db.fetch(query, [*cte_params, *params])]}
 
 
 def get_timeseries(
@@ -475,8 +498,9 @@ def get_timeseries(
         source_station=source_station,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         date_trunc(%s, captured_at) AS bucket_start,
         COUNT(*) AS total_pieces,
@@ -488,7 +512,7 @@ def get_timeseries(
     GROUP BY date_trunc(%s, captured_at)
     ORDER BY bucket_start ASC
     """
-    rows = db.fetch(query, [bucket, *params, bucket])
+    rows = db.fetch(query, [*cte_params, bucket, *params, bucket])
     return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
 
 
@@ -507,8 +531,9 @@ def get_station_timeseries(
         end_at=end_at,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()}
+    {cte_sql}
     SELECT
         source_station,
         date_trunc(%s, captured_at) AS bucket_start,
@@ -521,7 +546,7 @@ def get_station_timeseries(
     GROUP BY source_station, date_trunc(%s, captured_at)
     ORDER BY source_station ASC NULLS LAST, bucket_start ASC
     """
-    rows = db.fetch(query, [bucket, *params, bucket])
+    rows = db.fetch(query, [*cte_params, bucket, *params, bucket])
     return {"bucket": bucket, "items": [normalize_row(row) for row in rows]}
 
 
@@ -532,8 +557,9 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         source_station=source_station,
         source_id=source_id,
     )
+    cte_sql, cte_params = piece_cte(start_at=start_at, end_at=end_at)
     query = f"""
-    {piece_cte()},
+    {cte_sql},
     filtered_pieces AS (
         SELECT
             source_station,
@@ -572,6 +598,20 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         FROM filtered_pieces
         WHERE captured_at IS NOT NULL
         GROUP BY source_station, part_number, date_trunc('day', captured_at)::date
+    ),
+    hourly_rows AS (
+        SELECT
+            source_station,
+            part_number,
+            date_trunc('hour', captured_at) AS bucket_start,
+            COUNT(*) AS total_pieces,
+            COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+            COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+            CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'OK')::float / COUNT(*) END AS pct_ok,
+            CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'NOK')::float / COUNT(*) END AS pct_nok
+        FROM filtered_pieces
+        WHERE captured_at IS NOT NULL
+        GROUP BY source_station, part_number, date_trunc('hour', captured_at)
     ),
     day_bounds AS (
         SELECT
@@ -731,6 +771,20 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
         WHERE captured_at IS NOT NULL
         GROUP BY station_pair, part_number, date_trunc('day', captured_at)::date
     ),
+    combined_hourly_rows AS (
+        SELECT
+            station_pair,
+            part_number,
+            date_trunc('hour', captured_at) AS bucket_start,
+            COUNT(*) AS total_pieces,
+            COUNT(*) FILTER (WHERE model_result = 'OK') AS ok_pieces,
+            COUNT(*) FILTER (WHERE model_result = 'NOK') AS nok_pieces,
+            CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'OK')::float / COUNT(*) END AS pct_ok,
+            CASE WHEN COUNT(*) = 0 THEN 0 ELSE COUNT(*) FILTER (WHERE model_result = 'NOK')::float / COUNT(*) END AS pct_nok
+        FROM combined_pieces
+        WHERE captured_at IS NOT NULL
+        GROUP BY station_pair, part_number, date_trunc('hour', captured_at)
+    ),
     combined_day_bounds AS (
         SELECT
             station_pair,
@@ -819,27 +873,31 @@ def get_reject_summary(db, start_at=None, end_at=None, source_station=None, sour
     SELECT
         COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM station_rows ORDER BY source_station ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json) AS stations,
         COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM daily_rows ORDER BY reject_date ASC, source_station ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json) AS daily,
+        COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM hourly_rows ORDER BY bucket_start ASC, source_station ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json) AS hourly,
         COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM condition_period_rows ORDER BY reject_date ASC, source_station ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC) row_data), '[]'::json) AS condition_periods,
         COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM condition_total_rows ORDER BY source_station ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC) row_data), '[]'::json) AS condition_totals,
         COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM top3_history_rows ORDER BY source_station ASC NULLS LAST, part_number ASC NULLS LAST, class_rank ASC, reject_date ASC) row_data), '[]'::json) AS top3_history,
         json_build_object(
             'stations', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_station_rows ORDER BY station_pair ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json),
             'daily', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_daily_rows ORDER BY reject_date ASC, station_pair ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json),
+            'hourly', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_hourly_rows ORDER BY bucket_start ASC, station_pair ASC NULLS LAST, part_number ASC NULLS LAST) row_data), '[]'::json),
             'condition_periods', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_condition_period_rows ORDER BY reject_date ASC, station_pair ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC) row_data), '[]'::json),
             'condition_totals', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_condition_total_rows ORDER BY station_pair ASC NULLS LAST, part_number ASC NULLS LAST, class_name ASC) row_data), '[]'::json),
             'top3_history', COALESCE((SELECT json_agg(row_to_json(row_data)) FROM (SELECT * FROM combined_top3_history_rows ORDER BY station_pair ASC NULLS LAST, part_number ASC NULLS LAST, class_rank ASC, reject_date ASC) row_data), '[]'::json)
         ) AS combined
     """
-    row = normalize_row(db.fetch_one(query, params) or {})
+    row = normalize_row(db.fetch_one(query, [*cte_params, *params]) or {})
     return {
         "stations": row.get("stations") or [],
         "daily": row.get("daily") or [],
+        "hourly": row.get("hourly") or [],
         "condition_periods": row.get("condition_periods") or [],
         "condition_totals": row.get("condition_totals") or [],
         "top3_history": row.get("top3_history") or [],
         "combined": row.get("combined") or {
             "stations": [],
             "daily": [],
+            "hourly": [],
             "condition_periods": [],
             "condition_totals": [],
             "top3_history": [],
