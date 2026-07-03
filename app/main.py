@@ -12,7 +12,7 @@ from scripts.generate_excel_report import ReportParams, build_workbook, default_
 
 app = FastAPI(
     title="Vision Administration API",
-    description="Local read-only API for model_results_central reports.",
+    description="Local API for model_results_central reports, glidepaths, and process change logs.",
     version="0.1.0",
 )
 

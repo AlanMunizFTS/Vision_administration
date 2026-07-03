@@ -1,6 +1,6 @@
 # Vision Administration
 
-API y dashboard local de solo lectura para consultar reportes desde `public.model_results_central`.
+API y dashboard local para consultar reportes desde `public.model_results_central`, administrar glidepaths y registrar cambios de proceso.
 
 ## Ejecutar con Docker
 
@@ -11,12 +11,6 @@ Requisitos:
 - `.env` con los datos reales de PostgreSQL.
 
 Arranque recomendado:
-
-```powershell
-.\start_api_docker.bat
-```
-
-O directamente:
 
 ```powershell
 docker compose up --build
@@ -30,7 +24,7 @@ API:       http://127.0.0.1:8000
 Docs API:  http://127.0.0.1:8000/docs
 ```
 
-La pagina divide los reportes por `source_station`, muestra resumen global, graficas por dia, defectos por condicion y top 3 historico.
+El dashboard permite revisar la planta completa, maquinas combinadas LEFT+RIGHT o cabezales individuales. Incluye filtros por fecha, maquina y `part_number`, graficas por dia, defectos por condicion, top 3 historico, metas de glidepath, marcadores de cambios de proceso y descarga de Excel.
 
 Los servicios quedan vivos mientras el compose siga corriendo. Para detenerlos, usa `Ctrl+C`; si los levantaste en segundo plano con `-d`, usa:
 
@@ -71,12 +65,6 @@ Edita `.env` con los datos reales de PostgreSQL.
 .\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-O con un solo comando:
-
-```powershell
-.\start_api.bat
-```
-
 La API queda viva mientras el comando siga abierto. Para detenerla, usa `Ctrl+C`.
 
 Documentacion interactiva:
@@ -100,6 +88,22 @@ http://127.0.0.1:8000/docs
 - `GET /api/v1/reject-summary`
 - `GET /api/v1/reports/excel`
 - `POST /api/v1/reports/excel`
+- `GET /api/v1/glidepath/projects`
+- `POST /api/v1/glidepath/projects`
+- `PATCH /api/v1/glidepath/projects/{project_id}`
+- `DELETE /api/v1/glidepath/projects/{project_id}`
+- `POST /api/v1/glidepath/projects/{project_id}/subprojects`
+- `PATCH /api/v1/glidepath/subprojects/{subproject_id}`
+- `DELETE /api/v1/glidepath/subprojects/{subproject_id}`
+- `POST /api/v1/glidepath/subprojects/{subproject_id}/milestones`
+- `PATCH /api/v1/glidepath/milestones/{milestone_id}`
+- `DELETE /api/v1/glidepath/milestones/{milestone_id}`
+- `GET /api/v1/change-log`
+- `POST /api/v1/change-log`
+- `PATCH /api/v1/change-log/{entry_id}`
+- `DELETE /api/v1/change-log/{entry_id}`
+
+Nota: los endpoints de reportes leen `public.model_results_central`; los endpoints de glidepath y change log crean tablas auxiliares propias para guardar proyectos, metas y eventos de cambio.
 
 ## Reglas
 
