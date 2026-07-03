@@ -838,7 +838,7 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
             {changeMarkers.flatMap((marker) => marker.entries).map((entry) => (
               <span className="change-log-legend-item" key={entry.id} title={entry.description || ""}>
                 <span className="change-log-legend-dot" />
-                {entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""} · {entry.label}
+                {entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""} - {entry.label}
               </span>
             ))}
           </div>
@@ -1782,10 +1782,10 @@ function App() {
   const overallColorsByDefect = useMemo(() => defectColorMap(overallData), [overallData]);
 
   const levelTitle = showOverall
-    ? "Overall · Whole Plant"
+    ? "Overall - Whole Plant"
     : viewLevel.type === "machine"
-      ? `Machine · ${showAllMachines ? "All Machines" : stationPairName(viewLevel.pair)}`
-      : `Head · ${stationPairName(viewLevel.pair)}`;
+      ? `Machine - ${showAllMachines ? "All Machines" : stationPairName(viewLevel.pair)}`
+      : `Head - ${stationPairName(viewLevel.pair)}`;
 
   const displayData = showByHead ? visibleData : showOverall ? overallData : combinedData;
   const displayStations = showByHead ? stations : showOverall ? overallStations : combinedStations;
@@ -1840,7 +1840,7 @@ function App() {
       <main>
         <header className="topbar">
           <div>
-            <span className="eyebrow">Vision · Quality Analytics</span>
+            <span className="eyebrow">Vision - Quality Analytics</span>
             <h1>Reject Summary</h1>
             <p>{levelTitle}</p>
           </div>
