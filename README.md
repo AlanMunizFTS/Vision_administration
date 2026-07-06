@@ -85,6 +85,22 @@ Documentacion interactiva:
 http://127.0.0.1:8000/docs
 ```
 
+## Sincronizar bases remotas
+
+El flujo unificado esta en `app/IE_db.py`. Lee las estaciones desde `app/machines.json`, exporta por SSH, transforma los datos e importa a PostgreSQL central con un solo log.
+
+```powershell
+py app\IE_db.py
+```
+
+Por defecto guarda:
+
+- Log unico: `app\sync.log`
+- Dumps diarios: `app\Database_ddMMyy`
+- SQL temporal: `app\Database_ddMMyy\_temp`, eliminado al terminar
+
+El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /api/v1/sync-db` para consultar estado/log. Para conectar esto a un boton, el backend debe correr en una maquina con acceso a `ssh`, `docker` y al contenedor PostgreSQL central.
+
 ## Endpoints
 
 - `GET /health`

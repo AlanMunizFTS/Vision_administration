@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app import reports
 from app.db import close_db, get_db
+from app.sync_runner import sync_runner
 from scripts.generate_excel_report import ReportParams, build_workbook, default_period
 
 
@@ -48,6 +49,16 @@ def health():
 @app.get("/api/v1/options")
 def options(db=Depends(db_dependency)):
     return reports.get_options(db)
+
+
+@app.post("/api/v1/sync-db")
+def start_database_sync():
+    return sync_runner.start()
+
+
+@app.get("/api/v1/sync-db")
+def database_sync_status():
+    return sync_runner.status()
 
 
 @app.get("/api/v1/results")
