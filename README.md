@@ -1,63 +1,57 @@
 # Vision Administration
 
-API y dashboard local de solo lectura para consultar reportes desde `public.model_results_central`.
+Local API and dashboard for querying reports from `public.model_results_central`, managing glidepaths, and tracking process changes.
 
-## Ejecutar con Docker
+## Run With Docker
 
-Requisitos:
+Requirements:
 
-- Docker Desktop abierto.
-- PostgreSQL levantado en tu PC o en otro host accesible.
-- `.env` con los datos reales de PostgreSQL.
+- Docker Desktop running.
+- PostgreSQL available on your PC or another reachable host.
+- `.env` populated with real PostgreSQL connection values.
 
-Arranque recomendado:
-
-```powershell
-.\start_api_docker.bat
-```
-
-O directamente:
+Recommended startup:
 
 ```powershell
 docker compose up --build
 ```
 
-En Docker, quedan disponibles:
+When running in Docker, these services are available:
 
 ```text
 Dashboard: http://127.0.0.1:3000
 API:       http://127.0.0.1:8000
-Docs API:  http://127.0.0.1:8000/docs
+API Docs:  http://127.0.0.1:8000/docs
 ```
 
-La pagina divide los reportes por `source_station`, muestra resumen global, graficas por dia, defectos por condicion y top 3 historico.
+The dashboard lets you review the whole plant, combined LEFT+RIGHT machines, or individual heads. It includes filters for date, machine, and `part_number`, day-by-day charts, per-condition defects, top 3 history, glidepath targets, process-change markers, and Excel export.
 
-Los servicios quedan vivos mientras el compose siga corriendo. Para detenerlos, usa `Ctrl+C`; si los levantaste en segundo plano con `-d`, usa:
+The services stay up while `docker compose` is running. To stop them, press `Ctrl+C`; if you started them in the background with `-d`, use:
 
 ```powershell
 docker compose down
 ```
 
-Para ver los logs:
+To view logs:
 
 ```powershell
 docker compose logs vision-api
 docker compose logs vision-web
 ```
 
-Para seguirlos en vivo:
+To stream logs live:
 
 ```powershell
 docker compose logs -f vision-api
 ```
 
-Nota: dentro de Docker, `127.0.0.1` apunta al contenedor, no a tu PC. Por eso `docker-compose.yml` usa `host.docker.internal` como `DB_HOST` por defecto. Si PostgreSQL esta en otro equipo, agrega en `.env`:
+Note: inside Docker, `127.0.0.1` points to the container, not your PC. That is why `docker-compose.yml` uses `host.docker.internal` as the default `DB_HOST`. If PostgreSQL is running on another machine, add this to `.env`:
 
 ```text
 API_DB_HOST=192.168.x.x
 ```
 
-## Ejecutar sin Docker
+## Run Without Docker
 
 ```powershell
 py -3.12 -m venv venv
@@ -65,21 +59,15 @@ py -3.12 -m venv venv
 Copy-Item .env.example .env
 ```
 
-Edita `.env` con los datos reales de PostgreSQL.
+Edit `.env` with your real PostgreSQL values.
 
 ```powershell
 .\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-O con un solo comando:
+The API stays up while that command is running. To stop it, press `Ctrl+C`.
 
-```powershell
-.\start_api.bat
-```
-
-La API queda viva mientras el comando siga abierto. Para detenerla, usa `Ctrl+C`.
-
-Documentacion interactiva:
+Interactive documentation:
 
 ```text
 http://127.0.0.1:8000/docs
@@ -124,17 +112,33 @@ El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /
 - `GET /api/v1/reject-summary`
 - `GET /api/v1/reports/excel`
 - `POST /api/v1/reports/excel`
+- `GET /api/v1/glidepath/projects`
+- `POST /api/v1/glidepath/projects`
+- `PATCH /api/v1/glidepath/projects/{project_id}`
+- `DELETE /api/v1/glidepath/projects/{project_id}`
+- `POST /api/v1/glidepath/projects/{project_id}/subprojects`
+- `PATCH /api/v1/glidepath/subprojects/{subproject_id}`
+- `DELETE /api/v1/glidepath/subprojects/{subproject_id}`
+- `POST /api/v1/glidepath/subprojects/{subproject_id}/milestones`
+- `PATCH /api/v1/glidepath/milestones/{milestone_id}`
+- `DELETE /api/v1/glidepath/milestones/{milestone_id}`
+- `GET /api/v1/change-log`
+- `POST /api/v1/change-log`
+- `PATCH /api/v1/change-log/{entry_id}`
+- `DELETE /api/v1/change-log/{entry_id}`
 
-## Reglas
+Note: report endpoints read from `public.model_results_central`; glidepath and change-log endpoints create their own auxiliary tables to store projects, targets, and change events.
 
-- La pieza se identifica por `source_station` + `jsn`.
-- `captured_at` sale del JSN usando el formato `MMDDYYHHMMSS` en posiciones 6 a 17.
-- Una pieza es `OK` si todas sus detecciones tienen `class_name = OK`.
-- Una pieza es `NOK` si tiene al menos una deteccion no-OK.
-- El defecto principal es la deteccion no-OK con mayor `confidence`.
-- Los filtros de fecha usan `captured_at`.
+## Rules
 
-## Ejemplo desde Python
+- A piece is identified by `source_station` + `jsn`.
+- `captured_at` is parsed from the JSN using the `MMDDYYHHMMSS` format in positions 6 to 17.
+- A piece is `OK` when all detections have `class_name = OK`.
+- A piece is `NOK` when it has at least one non-OK detection.
+- The primary defect is the non-OK detection with the highest `confidence`.
+- Date filters use `captured_at`.
+
+## Python Example
 
 ```python
 import requests
@@ -144,31 +148,32 @@ response.raise_for_status()
 print(response.json())
 ```
 
-## Reporte Excel
+## Excel Report
 
-Con la API levantada, genera un reporte basado en las mismas pestañas del frontend para los ultimos 7 dias:
+With the API running, generate a report based on the same frontend tabs for the last 7 days:
 
 ```powershell
 .\venv\Scripts\python.exe scripts\generate_excel_report.py
 ```
 
-El archivo se guarda en `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`. El Excel incluye las hojas `Por dia`, `Per Condition` y `Top 3 Historico`, con tablas y autofiltros basicos de Excel.
+The file is saved to `reports/vision_report_YYYYMMDD_HHMMSS.xlsx`. The workbook includes the `By Day`, `Per Condition`, and `Top 3 History` sheets, with tables and basic Excel autofilters.
 
-Parametros utiles:
+Useful parameters:
 
 ```powershell
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --days 7
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --start-at "2026-06-19T00:00:00" --end-at "2026-06-26T23:59:59"
 .\venv\Scripts\python.exe scripts\generate_excel_report.py --source-station station-a
+.\venv\Scripts\python.exe scripts\generate_excel_report.py --part-number PN-1 --part-number PN-2
 ```
 
-Desde el frontend, la descarga de Excel usa los datos ya cargados en el dashboard para generar el archivo mas rapido y replicar lo visible. Los filtros disponibles para el reporte son fecha y `source_station`; `JSN` ya no esta disponible como filtro.
+From the frontend, Excel export uses the data already loaded in the dashboard so generation is faster and matches what is visible. The available report filters are date, `source_station`, and `part_number`; `JSN` is no longer available as a filter.
 
-Si estas usando Docker, reconstruye el contenedor y ejecuta el script dentro de `vision-api`:
+If you are using Docker, rebuild the container and run the script inside `vision-api`:
 
 ```powershell
 docker compose up --build -d
 docker compose exec vision-api python scripts/generate_excel_report.py
 ```
 
-El volumen `./reports:/app/reports` hace que el Excel quede disponible en la carpeta local `reports`.
+The `./reports:/app/reports` volume makes the Excel file available in the local `reports` folder.

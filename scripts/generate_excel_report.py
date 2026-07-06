@@ -38,6 +38,8 @@ class ReportParams:
     start_at: str
     end_at: str
     source_station: str | None = None
+    part_numbers: list[str] | None = None
+    filter_part_numbers: bool = True
     output_dir: str = DEFAULT_OUTPUT_DIR
 
 
@@ -71,6 +73,7 @@ def build_params(args):
         start_at=start_at.isoformat(sep=" ", timespec="seconds"),
         end_at=end_at.isoformat(sep=" ", timespec="seconds"),
         source_station=args.source_station,
+        part_numbers=args.part_numbers or None,
         output_dir=args.output_dir,
     )
 
@@ -125,7 +128,7 @@ def _date_label(value):
 def _station_name(value):
     text = str(value or "").strip()
     if not text:
-        return "Sin estacion"
+        return "No station"
 
     match = re.search(r"(?:\s*-\s*|_)(LEFT|RIGHT)$", text, re.IGNORECASE)
     raw_base = text[: match.start()].strip(" _-") if match else text
@@ -229,7 +232,7 @@ def _append_table(sheet, table_name, headers, rows, start_row=None, start_col=1)
         start_row = 1
     rows = list(rows or [])
     if not rows:
-        rows = [["Sin datos", *[""] * (len(headers) - 1)]]
+        rows = [["No data", *[""] * (len(headers) - 1)]]
 
     for offset, value in enumerate(headers):
         sheet.cell(row=start_row, column=start_col + offset, value=value)
@@ -284,6 +287,151 @@ def _combined_as_station_data(data):
         "condition_periods": map_rows(combined.get("condition_periods")),
         "condition_totals": map_rows(combined.get("condition_totals")),
         "top3_history": map_rows(combined.get("top3_history")),
+    }
+
+
+def _part_number_value(row):
+    return str((row or {}).get("part_number") or "").strip()
+
+
+def _pct(numerator, denominator):
+    return numerator / denominator if denominator else 0
+
+
+def _filter_part_rows(rows, selected_part_numbers):
+    selected = set(selected_part_numbers or [])
+    if not selected:
+        return list(rows or [])
+    return [row for row in rows or [] if _part_number_value(row) in selected]
+
+
+def _aggregate_piece_rows(rows, key_fields, include_source_stations=False):
+    groups = {}
+    for row in rows or []:
+        key = tuple(row.get(field) or "" for field in key_fields)
+        if key not in groups:
+            item = {field: row.get(field) or "" for field in key_fields}
+            item.update({"ok_pieces": 0, "nok_pieces": 0, "total_pieces": 0})
+            if include_source_stations:
+                item["source_stations"] = set()
+            groups[key] = item
+
+        item = groups[key]
+        item["ok_pieces"] += _normalize_int(row.get("ok_pieces"))
+        item["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+        item["total_pieces"] += _normalize_int(row.get("total_pieces"))
+        if include_source_stations:
+            item["source_stations"].update(row.get("source_stations") or [])
+
+    output = []
+    for item in groups.values():
+        total = item["total_pieces"]
+        item["pct_ok"] = _pct(item["ok_pieces"], total)
+        item["pct_nok"] = _pct(item["nok_pieces"], total)
+        if include_source_stations:
+            item["source_stations"] = sorted(item["source_stations"])
+        output.append(item)
+    return output
+
+
+def _aggregate_condition_periods(rows, key_fields):
+    groups = {}
+    for row in rows or []:
+        key = tuple(row.get(field) or "" for field in key_fields)
+        if key not in groups:
+            item = {field: row.get(field) or "" for field in key_fields}
+            item.update(
+                {
+                    "period_start": row.get("period_start") or "",
+                    "period_end": row.get("period_end") or "",
+                    "ok_pieces": 0,
+                    "nok_pieces": 0,
+                    "total_pieces": 0,
+                }
+            )
+            groups[key] = item
+
+        item = groups[key]
+        item["ok_pieces"] += _normalize_int(row.get("ok_pieces"))
+        item["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+        item["total_pieces"] += _normalize_int(row.get("total_pieces"))
+        if row.get("period_start") and (not item["period_start"] or row["period_start"] < item["period_start"]):
+            item["period_start"] = row["period_start"]
+        if row.get("period_end") and (not item["period_end"] or row["period_end"] > item["period_end"]):
+            item["period_end"] = row["period_end"]
+
+    return list(groups.values())
+
+
+def _aggregate_condition_totals(rows, station_key):
+    groups = {}
+    for row in rows or []:
+        class_name = _defect_name(row.get("class_name"))
+        key = (row.get(station_key) or "", class_name)
+        groups.setdefault(key, {station_key: key[0], "class_name": class_name, "nok_pieces": 0})
+        groups[key]["nok_pieces"] += _normalize_int(row.get("nok_pieces"))
+    return list(groups.values())
+
+
+def _rebuild_top3_history(condition_periods, station_key):
+    output = []
+    for station, rows in _group_by(condition_periods, station_key).items():
+        totals = {}
+        for row in rows:
+            class_name = _defect_name(row.get("class_name"))
+            if class_name == "OK":
+                continue
+            totals[class_name] = totals.get(class_name, 0) + _normalize_int(row.get("nok_pieces"))
+
+        for rank, (class_name, total) in enumerate(sorted(totals.items(), key=lambda item: (-item[1], item[0]))[:3], start=1):
+            by_date = {}
+            for row in rows:
+                if _defect_name(row.get("class_name")) != class_name:
+                    continue
+                day = _date_label(row.get("reject_date"))
+                if day:
+                    by_date[day] = by_date.get(day, 0) + _normalize_int(row.get("nok_pieces"))
+
+            for day in sorted(by_date):
+                output.append(
+                    {
+                        station_key: station,
+                        "class_name": class_name,
+                        "total_nok_pieces": total,
+                        "class_rank": rank,
+                        "reject_date": day,
+                        "nok_pieces": by_date[day],
+                    }
+                )
+    return output
+
+
+def _apply_part_number_filter(data, part_numbers=None):
+    data = data or {}
+    selected = [str(value).strip() for value in part_numbers or [] if str(value or "").strip()]
+    side_periods = _aggregate_condition_periods(
+        _filter_part_rows(data.get("condition_periods"), selected),
+        ("source_station", "reject_date", "class_name"),
+    )
+    combined = data.get("combined") or {}
+    combined_periods = _aggregate_condition_periods(
+        _filter_part_rows(combined.get("condition_periods"), selected),
+        ("station_pair", "reject_date", "class_name"),
+    )
+
+    return {
+        "stations": _aggregate_piece_rows(_filter_part_rows(data.get("stations"), selected), ("source_station",)),
+        "daily": _aggregate_piece_rows(_filter_part_rows(data.get("daily"), selected), ("source_station", "reject_date")),
+        "condition_periods": side_periods,
+        "condition_totals": _aggregate_condition_totals(_filter_part_rows(data.get("condition_totals"), selected), "source_station"),
+        "top3_history": _rebuild_top3_history(side_periods, "source_station"),
+        "combined": {
+            "stations": _aggregate_piece_rows(_filter_part_rows(combined.get("stations"), selected), ("station_pair",), include_source_stations=True),
+            "daily": _aggregate_piece_rows(_filter_part_rows(combined.get("daily"), selected), ("station_pair", "reject_date")),
+            "condition_periods": combined_periods,
+            "condition_totals": _aggregate_condition_totals(_filter_part_rows(combined.get("condition_totals"), selected), "station_pair"),
+            "top3_history": _rebuild_top3_history(combined_periods, "station_pair"),
+        },
     }
 
 
@@ -395,7 +543,7 @@ def _add_condition_pie_chart(sheet, label, classes, header_row, total_row, color
 
     class_end_col = 1 + len(classes)
     chart = PieChart()
-    chart.title = f"{label} - Rechazos por clase"
+    chart.title = f"{label} - Rejects by Class"
     chart.height = 8
     chart.width = 12
     chart.add_data(
@@ -431,9 +579,9 @@ def _add_top3_condition_chart(sheet, condition_meta, classes, colors_by_defect, 
 
     condition_sheet = condition_meta["sheet"]
     chart = BarChart()
-    chart.title = f"{condition_meta['label']} - Top 3 historico"
+    chart.title = f"{condition_meta['label']} - Top 3 History"
     chart.y_axis.title = "NOK"
-    chart.x_axis.title = "Fecha"
+    chart.x_axis.title = "Date"
     chart.y_axis.scaling.min = 0
     chart.y_axis.scaling.max = _top_condition_axis_max(condition_meta, classes)
     chart.y_axis.number_format = "0"
@@ -477,7 +625,42 @@ def _format_percentage_columns(sheet, columns, start_row=2):
 
 
 DAILY_METRICS = ("OK", "NOK", "Total", "% OK", "% NOK")
-DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combinado")
+DAILY_STANDARD_BLOCKS = ("Left", "Right", "Combined")
+DAILY_FILTER_ROWS = 4
+
+
+def _filter_value(value):
+    text = str(value or "").strip()
+    return text or "All"
+
+
+def _filter_list_value(values):
+    cleaned = [str(value).strip() for value in values or [] if str(value or "").strip()]
+    return ", ".join(cleaned) if cleaned else "All"
+
+
+def _write_filter_band(sheet, report_params):
+    title_fill = PatternFill(fill_type="solid", fgColor="E8EEF5")
+    label_font = Font(bold=True)
+    rows = [
+        ("Applied Filters", ""),
+        (f"Start: {_filter_value(report_params.start_at)}", f"End: {_filter_value(report_params.end_at)}"),
+        (f"Station: {_filter_value(report_params.source_station)}", f"Part Number: {_filter_list_value(report_params.part_numbers)}"),
+    ]
+
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    sheet.cell(row=1, column=1, value=rows[0][0])
+    sheet.cell(row=1, column=1).fill = title_fill
+    sheet.cell(row=1, column=1).font = label_font
+    sheet.cell(row=1, column=1).alignment = Alignment(horizontal="left", vertical="center")
+
+    for row_idx, (left, right) in enumerate(rows[1:], start=2):
+        sheet.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=2)
+        sheet.merge_cells(start_row=row_idx, start_column=3, end_row=row_idx, end_column=4)
+        sheet.cell(row=row_idx, column=1, value=left)
+        sheet.cell(row=row_idx, column=3, value=right)
+        sheet.cell(row=row_idx, column=1).font = label_font
+        sheet.cell(row=row_idx, column=3).font = label_font
 
 
 def _split_station_side(value):
@@ -534,16 +717,16 @@ def _daily_layout(data):
             continue
         dates.add(day)
         groups.setdefault(base, {"blocks": set(), "has_standard_side": False})
-        groups[base]["blocks"].add("Combinado")
-        by_block_date[(base, "Combinado", day)] = row
+        groups[base]["blocks"].add("Combined")
+        by_block_date[(base, "Combined", day)] = row
 
     ordered_groups = []
     for base in sorted(groups, key=_station_name):
         info = groups[base]
-        if info["has_standard_side"] or "Combinado" in info["blocks"]:
-            blocks = [block for block in DAILY_STANDARD_BLOCKS if block in info["blocks"] or block != "Combinado"]
-            if "Combinado" not in blocks:
-                blocks.append("Combinado")
+        if info["has_standard_side"] or "Combined" in info["blocks"]:
+            blocks = [block for block in DAILY_STANDARD_BLOCKS if block in info["blocks"] or block != "Combined"]
+            if "Combined" not in blocks:
+                blocks.append("Combined")
         else:
             blocks = sorted(info["blocks"], key=_station_name)
         ordered_groups.append((base, blocks))
@@ -563,9 +746,10 @@ def _apply_daily_border(sheet, min_row, max_row, min_col, max_col):
             cell.border = Border(left=left, right=right, top=top, bottom=bottom)
 
 
-def _write_daily_sheet(workbook, data):
+def _write_daily_sheet(workbook, data, report_params):
     sheet = workbook.active
-    sheet.title = "Por dia"
+    sheet.title = "By Day"
+    _write_filter_band(sheet, report_params)
     dates, groups, by_block_date = _daily_layout(data)
     header_fill = PatternFill(fill_type="solid", fgColor="404040")
     header_font = Font(color="FFFFFF", bold=True)
@@ -573,12 +757,16 @@ def _write_daily_sheet(workbook, data):
     percent_cols = []
     nok_percent_cols = []
     series_cols = []
+    group_row = DAILY_FILTER_ROWS + 1
+    block_row = group_row + 1
+    metric_row = group_row + 2
+    data_start_row = group_row + 3
 
-    sheet.cell(row=3, column=1, value="Date")
-    sheet.cell(row=3, column=1).fill = header_fill
-    sheet.cell(row=3, column=1).font = header_font
-    sheet.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
-    _apply_daily_border(sheet, 1, 3, 1, 1)
+    sheet.cell(row=metric_row, column=1, value="Date")
+    sheet.cell(row=metric_row, column=1).fill = header_fill
+    sheet.cell(row=metric_row, column=1).font = header_font
+    sheet.cell(row=metric_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    _apply_daily_border(sheet, group_row, metric_row, 1, 1)
 
     col_idx = 2
     for base, blocks in groups:
@@ -586,13 +774,13 @@ def _write_daily_sheet(workbook, data):
         for block in blocks:
             block_start_col = col_idx
             block_end_col = col_idx + len(DAILY_METRICS) - 1
-            sheet.merge_cells(start_row=2, start_column=block_start_col, end_row=2, end_column=block_end_col)
-            sheet.cell(row=2, column=block_start_col, value=block)
-            sheet.cell(row=2, column=block_start_col).alignment = Alignment(horizontal="center", vertical="center")
+            sheet.merge_cells(start_row=block_row, start_column=block_start_col, end_row=block_row, end_column=block_end_col)
+            sheet.cell(row=block_row, column=block_start_col, value=block)
+            sheet.cell(row=block_row, column=block_start_col).alignment = Alignment(horizontal="center", vertical="center")
 
             for metric_offset, metric in enumerate(DAILY_METRICS):
                 metric_col = block_start_col + metric_offset
-                cell = sheet.cell(row=3, column=metric_col, value=metric)
+                cell = sheet.cell(row=metric_row, column=metric_col, value=metric)
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -602,16 +790,15 @@ def _write_daily_sheet(workbook, data):
                     nok_percent_cols.append(metric_col)
                     series_cols.append((base, block, metric_col))
 
-            _apply_daily_border(sheet, 2, 3, block_start_col, block_end_col)
+            _apply_daily_border(sheet, block_row, metric_row, block_start_col, block_end_col)
             col_idx = block_end_col + 1
 
         base_end_col = col_idx - 1
-        sheet.merge_cells(start_row=1, start_column=base_start_col, end_row=1, end_column=base_end_col)
-        sheet.cell(row=1, column=base_start_col, value=base)
-        sheet.cell(row=1, column=base_start_col).alignment = Alignment(horizontal="center", vertical="center")
-        _apply_daily_border(sheet, 1, 1, base_start_col, base_end_col)
+        sheet.merge_cells(start_row=group_row, start_column=base_start_col, end_row=group_row, end_column=base_end_col)
+        sheet.cell(row=group_row, column=base_start_col, value=base)
+        sheet.cell(row=group_row, column=base_start_col).alignment = Alignment(horizontal="center", vertical="center")
+        _apply_daily_border(sheet, group_row, group_row, base_start_col, base_end_col)
 
-    data_start_row = 4
     for row_idx, day in enumerate(dates, start=data_start_row):
         sheet.cell(row=row_idx, column=1, value=day)
         sheet.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -626,7 +813,7 @@ def _write_daily_sheet(workbook, data):
 
     data_end_row = data_start_row + len(dates) - 1
     max_col = max(col_idx - 1, 1)
-    sheet.freeze_panes = "A4"
+    sheet.freeze_panes = f"A{data_start_row}"
 
     if dates:
         for col in percent_cols:
@@ -660,22 +847,22 @@ def _write_daily_sheet(workbook, data):
         _apply_daily_border(sheet, data_start_row, data_end_row, 1, max_col)
 
     if not groups:
-        sheet.cell(row=data_start_row, column=1, value="Sin datos")
+        sheet.cell(row=data_start_row, column=1, value="No data")
         _fit_columns(sheet)
         return sheet
 
     if dates and series_cols:
         chart = LineChart()
-        chart.title = "Tasa de rechazo (% NOK) por dia"
+        chart.title = "Reject Rate (% NOK) by Day"
         chart.y_axis.title = "% NOK"
-        chart.x_axis.title = "Fecha"
+        chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
         chart.y_axis.scaling.max = 1
         chart.height = 7.5
         chart.width = 15
         categories = Reference(sheet, min_col=1, min_row=data_start_row, max_row=data_end_row)
         for base, block, col_idx in series_cols:
-            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=3, max_row=data_end_row)
+            values = Reference(sheet, min_col=col_idx, max_col=col_idx, min_row=metric_row, max_row=data_end_row)
             chart.add_data(values, titles_from_data=True)
             chart.series[-1].tx = SeriesLabel(v=f"{base} - {block}")
         chart.set_categories(categories)
@@ -691,7 +878,7 @@ def _append_combined_daily_section(sheet, data):
         return
 
     row_cursor = sheet.max_row + 3
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Por dia")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - By Day")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 1
 
@@ -703,7 +890,7 @@ def _append_combined_daily_section(sheet, data):
         for row in daily_rows
     }
 
-    headers = ["Fecha"]
+    headers = ["Date"]
     for station in stations:
         label = _station_name(station)
         headers.extend([f"{label} OK", f"{label} NOK", f"{label} Total", f"{label} % OK", f"{label} % NOK"])
@@ -728,17 +915,17 @@ def _append_combined_daily_section(sheet, data):
         rows.append(output)
 
     if not headers[1:]:
-        headers = ["Fecha", "Sin datos"]
-    header_row, max_row, _ = _append_table(sheet, "tblPorDiaCombinado", headers, rows, start_row=row_cursor)
+        headers = ["Date", "No data"]
+    header_row, max_row, _ = _append_table(sheet, "tblCombinedByDay", headers, rows, start_row=row_cursor)
     percent_cols = [5 + (idx * 5) for idx in range(len(stations))]
     percent_cols.extend([6 + (idx * 5) for idx in range(len(stations))])
     _format_percentage_columns(sheet, percent_cols, start_row=header_row + 1)
 
     if rows and stations:
         chart = LineChart()
-        chart.title = "Combinado LEFT+RIGHT - Tasa de rechazo (% NOK) por dia"
+        chart.title = "Combined LEFT+RIGHT - Reject Rate (% NOK) by Day"
         chart.y_axis.title = "% NOK"
-        chart.x_axis.title = "Fecha"
+        chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
         chart.y_axis.scaling.max = 1
         chart.height = 9
@@ -760,19 +947,19 @@ def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=N
     row_cursor = 1
 
     if not stations:
-        _append_table(sheet, "tblConditionEmpty", ["Fecha", "Total NOK"], [])
+        _append_table(sheet, "tblConditionEmpty", ["Date", "Total NOK"], [])
         _fit_columns(sheet)
         return sheet
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defects Day by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
-        headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
+        headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
@@ -817,19 +1004,19 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect, condition
 
     periods_by_station = _group_by(combined_data.get("condition_periods") or [], "source_station")
     row_cursor = sheet.max_row + 3
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Per Condition")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - Per Condition")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 2
 
     for station_idx, station in enumerate(stations, start=1):
         label = _station_name(station)
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defectos dia a dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Defects Day by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
-        headers = ["Fecha", *classes, "Total NOK"] if classes else ["Fecha", "Total NOK"]
+        headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
         daily_rows = _condition_daily_rows(periods, classes)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
@@ -864,13 +1051,13 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect, condition
 
 
 def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
-    sheet = workbook.create_sheet("Top 3 Historico")
+    sheet = workbook.create_sheet("Top 3 History")
     condition_ranges = condition_ranges or {}
     stations = sorted(condition_ranges, key=_station_name)
     row_cursor = 1
 
     if not stations:
-        _append_table(sheet, "tblTop3Empty", ["Top", "Class Name", "NOK acumulado"], [])
+        _append_table(sheet, "tblTop3Empty", ["Top", "Class Name", "Cumulative NOK"], [])
         _fit_columns(sheet)
         return sheet
 
@@ -879,7 +1066,7 @@ def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
         label = condition_meta["label"]
         classes = _top_condition_classes(condition_meta)
 
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
@@ -890,7 +1077,7 @@ def _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges=None):
         summary_header, summary_max_row, _ = _append_table(
             sheet,
             f"tblTop3Totals{station_idx}",
-            ["Top", "Class Name", "NOK acumulado"],
+            ["Top", "Class Name", "Cumulative NOK"],
             summary_rows,
             start_row=row_cursor,
         )
@@ -916,7 +1103,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         return
 
     row_cursor = max(sheet.max_row + 3, getattr(sheet, "_top3_next_row", 0))
-    sheet.cell(row=row_cursor, column=1, value="Combinado LEFT+RIGHT - Top 3 Historico")
+    sheet.cell(row=row_cursor, column=1, value="Combined LEFT+RIGHT - Top 3 History")
     sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
     row_cursor += 2
 
@@ -925,7 +1112,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         label = condition_meta["label"]
         classes = _top_condition_classes(condition_meta)
 
-        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK por dia")
+        sheet.cell(row=row_cursor, column=1, value=f"{label} - Top 3 NOK by Day")
         sheet.cell(row=row_cursor, column=1).font = Font(bold=True)
         row_cursor += 1
 
@@ -933,7 +1120,7 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
         summary_header, summary_max_row, _ = _append_table(
             sheet,
             f"tblCombinedTop3Totals{station_idx}",
-            ["Top", "Class Name", "NOK acumulado"],
+            ["Top", "Class Name", "Cumulative NOK"],
             summary_rows,
             start_row=row_cursor,
         )
@@ -952,12 +1139,12 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
 
 def build_workbook(report_params, data):
     workbook = Workbook()
-    data = data or {}
+    data = _apply_part_number_filter(data, report_params.part_numbers) if report_params.filter_part_numbers else (data or {})
     colors_by_defect = _defect_color_map(data)
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     condition_ranges = {}
     combined_condition_ranges = {}
-    daily_sheet = _write_daily_sheet(workbook, data)
+    daily_sheet = _write_daily_sheet(workbook, data, report_params)
     _fit_columns(daily_sheet)
     conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges)
     _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect, combined_condition_ranges)
@@ -987,6 +1174,7 @@ def parse_args(argv=None):
     parser.add_argument("--start-at")
     parser.add_argument("--end-at")
     parser.add_argument("--source-station")
+    parser.add_argument("--part-number", dest="part_numbers", action="append")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args(argv)
 
@@ -1002,7 +1190,7 @@ def main(argv=None):
         print(f"Error: {exc}")
         return 1
 
-    print(f"Reporte generado: {output_path}")
+    print(f"Report generated: {output_path}")
     return 0
 
 

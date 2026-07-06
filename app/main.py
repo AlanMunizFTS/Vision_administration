@@ -1,9 +1,11 @@
+from datetime import date, time
 from io import BytesIO
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from app import reports
+from app import change_log, glidepath, reports
 from app.db import close_db, get_db
 from app.migrator import run_migrations
 from app.sync_runner import sync_runner
@@ -12,7 +14,7 @@ from scripts.generate_excel_report import ReportParams, build_workbook, default_
 
 app = FastAPI(
     title="Vision Administration API",
-    description="Local read-only API for model_results_central reports.",
+    description="Local API for model_results_central reports, glidepaths, and process change logs.",
     version="0.1.0",
 )
 
@@ -20,6 +22,8 @@ app = FastAPI(
 @app.on_event("startup")
 def startup_event():
     run_migrations()
+    glidepath.ensure_schema(get_db())
+    change_log.ensure_schema(get_db())
 
 
 @app.on_event("shutdown")
@@ -293,21 +297,37 @@ def _source_station_filter_label(filters):
     return filters.get("source_station") or None
 
 
+def _list_filter_values(filters, key):
+    values = filters.get(key)
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
+def _query_list_values(values):
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
 @app.get("/api/v1/reports/excel")
 def excel_report(
     start_at: str | None = None,
     end_at: str | None = None,
     source_station: str | None = None,
     source_id: int | None = None,
+    part_numbers: list[str] | None = Query(None),
     db=Depends(db_dependency),
 ):
     try:
         start_at, end_at = _excel_period(start_at, end_at)
+        cleaned_part_numbers = _query_list_values(part_numbers)
         report_params = ReportParams(
             api_url="local",
             start_at=start_at,
             end_at=end_at,
             source_station=source_station,
+            part_numbers=cleaned_part_numbers or None,
         )
         data = reports.get_reject_summary(
             db,
@@ -334,6 +354,224 @@ def excel_report_from_summary(payload: dict = Body(...)):
         start_at=str(filters.get("start_at") or ""),
         end_at=str(filters.get("end_at") or ""),
         source_station=_source_station_filter_label(filters),
+        part_numbers=_list_filter_values(filters, "part_numbers") or None,
+        filter_part_numbers=False,
     )
     workbook = build_workbook(report_params, data)
     return _workbook_response(workbook)
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class SubprojectCreate(BaseModel):
+    name: str
+    station_pairs: list[str]
+    start_date: date
+    start_pct_nok: float
+    status: str = "active"
+
+
+class SubprojectUpdate(BaseModel):
+    name: str | None = None
+    station_pairs: list[str] | None = None
+    start_date: date | None = None
+    start_pct_nok: float | None = None
+    status: str | None = None
+
+
+class MilestoneCreate(BaseModel):
+    target_date: date
+    target_pct_nok: float
+    label: str | None = None
+
+
+class MilestoneUpdate(BaseModel):
+    target_date: date | None = None
+    target_pct_nok: float | None = None
+    label: str | None = None
+
+
+@app.get("/api/v1/glidepath/projects")
+def glidepath_list_projects(db=Depends(db_dependency)):
+    return {"items": glidepath.get_projects(db)}
+
+
+@app.post("/api/v1/glidepath/projects")
+def glidepath_create_project(payload: ProjectCreate, db=Depends(db_dependency)):
+    try:
+        return glidepath.create_project(db, name=payload.name, description=payload.description)
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/glidepath/projects/{project_id}")
+def glidepath_update_project(project_id: int, payload: ProjectUpdate, db=Depends(db_dependency)):
+    try:
+        return glidepath.update_project(db, project_id, name=payload.name, description=payload.description)
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/glidepath/projects/{project_id}")
+def glidepath_delete_project(project_id: int, db=Depends(db_dependency)):
+    try:
+        glidepath.delete_project(db, project_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.post("/api/v1/glidepath/projects/{project_id}/subprojects")
+def glidepath_create_subproject(project_id: int, payload: SubprojectCreate, db=Depends(db_dependency)):
+    try:
+        return glidepath.create_subproject(
+            db,
+            project_id=project_id,
+            name=payload.name,
+            station_pairs=payload.station_pairs,
+            start_date=payload.start_date,
+            start_pct_nok=payload.start_pct_nok,
+            status=payload.status,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/glidepath/subprojects/{subproject_id}")
+def glidepath_update_subproject(subproject_id: int, payload: SubprojectUpdate, db=Depends(db_dependency)):
+    try:
+        return glidepath.update_subproject(
+            db,
+            subproject_id,
+            name=payload.name,
+            station_pairs=payload.station_pairs,
+            start_date=payload.start_date,
+            start_pct_nok=payload.start_pct_nok,
+            status=payload.status,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/glidepath/subprojects/{subproject_id}")
+def glidepath_delete_subproject(subproject_id: int, db=Depends(db_dependency)):
+    try:
+        glidepath.delete_subproject(db, subproject_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.post("/api/v1/glidepath/subprojects/{subproject_id}/milestones")
+def glidepath_create_milestone(subproject_id: int, payload: MilestoneCreate, db=Depends(db_dependency)):
+    try:
+        return glidepath.create_milestone(
+            db,
+            subproject_id=subproject_id,
+            target_date=payload.target_date,
+            target_pct_nok=payload.target_pct_nok,
+            label=payload.label,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/glidepath/milestones/{milestone_id}")
+def glidepath_update_milestone(milestone_id: int, payload: MilestoneUpdate, db=Depends(db_dependency)):
+    try:
+        return glidepath.update_milestone(
+            db,
+            milestone_id,
+            target_date=payload.target_date,
+            target_pct_nok=payload.target_pct_nok,
+            label=payload.label,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/glidepath/milestones/{milestone_id}")
+def glidepath_delete_milestone(milestone_id: int, db=Depends(db_dependency)):
+    try:
+        glidepath.delete_milestone(db, milestone_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+class ChangeLogEntryCreate(BaseModel):
+    station_pair: str
+    side: str = "both"
+    change_date: date
+    change_time: time | None = None
+    category: str = "Other"
+    label: str | None = None
+    description: str | None = None
+
+
+class ChangeLogEntryUpdate(BaseModel):
+    station_pair: str | None = None
+    side: str | None = None
+    change_date: date | None = None
+    change_time: time | None = None
+    category: str | None = None
+    label: str | None = None
+    description: str | None = None
+
+
+@app.get("/api/v1/change-log")
+def change_log_list(db=Depends(db_dependency)):
+    return {"items": change_log.get_entries(db)}
+
+
+@app.post("/api/v1/change-log")
+def change_log_create(payload: ChangeLogEntryCreate, db=Depends(db_dependency)):
+    try:
+        return change_log.create_entry(
+            db,
+            station_pair=payload.station_pair,
+            change_date=payload.change_date,
+            change_time=payload.change_time,
+            category=payload.category,
+            label=payload.label,
+            side=payload.side,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/change-log/{entry_id}")
+def change_log_update(entry_id: int, payload: ChangeLogEntryUpdate, db=Depends(db_dependency)):
+    try:
+        fields = payload.model_dump(exclude_unset=True)
+        return change_log.update_entry(
+            db,
+            entry_id,
+            station_pair=payload.station_pair,
+            change_date=payload.change_date,
+            change_time=fields.get("change_time", change_log.UNSET),
+            category=payload.category,
+            label=payload.label,
+            side=payload.side,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/change-log/{entry_id}")
+def change_log_delete(entry_id: int, db=Depends(db_dependency)):
+    try:
+        change_log.delete_entry(db, entry_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
