@@ -87,7 +87,15 @@ http://127.0.0.1:8000/docs
 
 ## Sincronizar bases remotas
 
-El flujo unificado esta en `app/IE_db.py`. Lee las estaciones desde `app/machines.json`, exporta por SSH, transforma los datos e importa a PostgreSQL central con un solo log.
+El flujo unificado esta en `app/IE_db.py`. Lee las estaciones desde `.env`, exporta por SSH, transforma los datos e importa a PostgreSQL central con un solo log.
+
+Configura las estaciones en `.env` con este formato:
+
+```text
+SYNC_STATIONS=STATION_A|192.168.1.10|station_a_db.sql|true;STATION_B|192.168.1.11|station_b_db.sql|true
+```
+
+Cada estacion usa `name|ip|output_file|enabled`, y las estaciones se separan con `;`. No guardes IPs, usuarios o nombres reales en archivos versionados.
 
 ```powershell
 py app\IE_db.py

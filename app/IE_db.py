@@ -1,12 +1,15 @@
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from app.config import load_env_file
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -69,6 +72,98 @@ def load_config(config_path):
         return json.load(file)
 
 
+def env_value(name, default=None, required=False):
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        if required:
+            raise ValueError(f"Falta {name} en .env.")
+        return default
+    return value.strip()
+
+
+def env_bool(name, default=False):
+    value = env_value(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_int(name, default):
+    value = env_value(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} debe ser un numero entero.") from exc
+
+
+def parse_env_stations(raw_stations):
+    stations = []
+    for raw_station in raw_stations.split(";"):
+        raw_station = raw_station.strip()
+        if not raw_station:
+            continue
+
+        parts = [part.strip() for part in raw_station.split("|")]
+        if len(parts) not in {3, 4}:
+            raise ValueError(
+                "SYNC_STATIONS debe usar el formato name|ip|output_file|enabled "
+                "separado por punto y coma."
+            )
+
+        station = {
+            "name": parts[0],
+            "ip": parts[1],
+            "output_file": parts[2],
+        }
+        if len(parts) == 4:
+            station["enabled"] = parts[3].lower() not in {"0", "false", "no", "n", "off"}
+        else:
+            station["enabled"] = True
+        stations.append(station)
+
+    return stations
+
+
+def load_config_from_env():
+    load_env_file()
+    return {
+        "version": "1.0",
+        "paths": {
+            "base_sync_dir": env_value("SYNC_BASE_SYNC_DIR", r"C:\FTS_SYNC"),
+            "add_to_central_script": env_value("SYNC_ADD_TO_CENTRAL_SCRIPT", "add_to_database_central.py"),
+            "logs_folder_name": env_value("SYNC_LOGS_FOLDER_NAME", "logs"),
+        },
+        "retention": {
+            "enabled": env_bool("SYNC_RETENTION_ENABLED", True),
+            "days": env_int("SYNC_RETENTION_DAYS", 7),
+            "folder_prefix": env_value("SYNC_RETENTION_FOLDER_PREFIX", "Database_"),
+            "date_format": env_value("SYNC_RETENTION_DATE_FORMAT", "ddMMyy"),
+        },
+        "ssh": {
+            "user": env_value("SYNC_SSH_USER", required=True),
+            "batch_mode": env_bool("SYNC_SSH_BATCH_MODE", True),
+            "connect_timeout_seconds": env_int("SYNC_SSH_CONNECT_TIMEOUT_SECONDS", 20),
+            "remote_command": env_value("SYNC_SSH_REMOTE_COMMAND", required=True),
+        },
+        "postgres": {
+            "docker_container": env_value("SYNC_POSTGRES_DOCKER_CONTAINER", "postgres-fts"),
+            "database": env_value("SYNC_POSTGRES_DATABASE", os.getenv("DB_NAME", "postgres")),
+            "user": env_value("SYNC_POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+            "target_table": env_value("SYNC_POSTGRES_TARGET_TABLE", "model_results_central"),
+            "source_station_column": env_value("SYNC_POSTGRES_SOURCE_STATION_COLUMN", "source_station"),
+        },
+        "stations": parse_env_stations(env_value("SYNC_STATIONS", required=True)),
+    }
+
+
+def load_sync_config(config_path):
+    if config_path and config_path.exists():
+        return load_config(config_path), str(config_path)
+    return load_config_from_env(), ".env"
+
+
 def require_config(config):
     required_paths = [
         ("ssh", "user"),
@@ -82,7 +177,7 @@ def require_config(config):
 
     for section, key in required_paths:
         if not config.get(section, {}).get(key):
-            raise ValueError(f"Falta {section}.{key} en machines.json.")
+            raise ValueError(f"Falta {section}.{key} en la configuracion de sincronizacion.")
 
     stations = config.get("stations") or []
     if not stations:
@@ -410,14 +505,23 @@ def remove_old_database_folders(base_dir, folder_prefix, date_format, retention_
 
 
 def parse_args():
+    load_env_file()
+    default_config = os.getenv("SYNC_CONFIG_PATH")
+    if default_config:
+        default_config = Path(default_config)
+        if not default_config.is_absolute():
+            default_config = SCRIPT_DIR.parent / default_config
+    else:
+        default_config = DEFAULT_CONFIG
+
     parser = argparse.ArgumentParser(
         description="Exporta bases remotas por SSH e importa model_results en PostgreSQL central."
     )
     parser.add_argument(
         "--config",
-        default=DEFAULT_CONFIG,
+        default=default_config,
         type=Path,
-        help="Ruta a machines.json. Por defecto usa app/machines.json.",
+        help="Ruta al JSON privado de maquinas. Por defecto usa SYNC_CONFIG_PATH o app/machines.json.",
     )
     parser.add_argument(
         "--work-dir",
@@ -446,7 +550,8 @@ def main():
     temp_dir = None
 
     try:
-        config = load_config(args.config.resolve())
+        config_path = args.config.resolve() if args.config else None
+        config, config_source = load_sync_config(config_path)
         require_config(config)
 
         ssh_command = resolve_command("ssh.exe", "ssh")
@@ -463,7 +568,7 @@ def main():
 
         logger.info("============================================================")
         logger.info("Iniciando FTS DWH Sync desde IE_db.py")
-        logger.info("ConfigPath: %s", args.config.resolve())
+        logger.info("ConfigSource: %s", config_source)
         logger.info("Carpeta de trabajo: %s", work_dir)
         logger.info("Carpeta diaria: %s", today_dir)
         logger.info("Log unico: %s", log_path)

@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app import reports
 from app.db import close_db, get_db
+from app.migrator import run_migrations
 from app.sync_runner import sync_runner
 from scripts.generate_excel_report import ReportParams, build_workbook, default_period
 
@@ -14,6 +15,11 @@ app = FastAPI(
     description="Local read-only API for model_results_central reports.",
     version="0.1.0",
 )
+
+
+@app.on_event("startup")
+def startup_event():
+    run_migrations()
 
 
 @app.on_event("shutdown")

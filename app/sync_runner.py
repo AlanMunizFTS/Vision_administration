@@ -1,14 +1,29 @@
 import subprocess
 import sys
 import threading
+import os
 from datetime import datetime
 from pathlib import Path
+
+from app.config import load_env_file
 
 
 APP_DIR = Path(__file__).resolve().parent
 SYNC_SCRIPT = APP_DIR / "IE_db.py"
-SYNC_CONFIG = APP_DIR / "machines.json"
 SYNC_LOG = APP_DIR / "sync.log"
+
+
+def get_sync_config_path():
+    load_env_file()
+    configured_path = os.getenv("SYNC_CONFIG_PATH")
+    if not configured_path:
+        return APP_DIR / "machines.json"
+
+    config_path = Path(configured_path)
+    if config_path.is_absolute():
+        return config_path
+
+    return (APP_DIR.parent / config_path).resolve()
 
 
 class SyncRunner:
@@ -28,12 +43,13 @@ class SyncRunner:
             self._started_at = datetime.now()
             self._finished_at = None
             self._return_code = None
+            sync_config = get_sync_config_path()
             self._process = subprocess.Popen(
                 [
                     sys.executable,
                     str(SYNC_SCRIPT),
                     "--config",
-                    str(SYNC_CONFIG),
+                    str(sync_config),
                     "--work-dir",
                     str(APP_DIR),
                     "--log",
