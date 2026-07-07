@@ -27,8 +27,8 @@ services:
       vision-db:
         condition: service_healthy
     environment:
-      DB_HOST: ${API_DB_HOST:-vision-db}
-      DB_PORT: ${API_DB_PORT:-5432}
+      DB_HOST: vision-db
+      DB_PORT: 5432
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
     ports:
       - "${API_PORT:-8000}:8000"

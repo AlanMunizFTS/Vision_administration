@@ -10,7 +10,7 @@ Requirements:
 - `.env` populated with the project PostgreSQL values.
 
 The Docker stack includes its own dedicated PostgreSQL container, so it does not need to reuse another local database service. Automatic SQL migrations are controlled with `RUN_MIGRATIONS`.
-The same `DB_*` variables are used both to initialize the PostgreSQL container and to connect the app to that database.
+`DB_NAME`, `DB_USER`, and `DB_PASSWORD` initialize PostgreSQL and are also used by the API. `DB_PORT` publishes PostgreSQL to your machine; inside Docker, the API always connects to `vision-db:5432`.
 
 Recommended startup:
 
@@ -22,6 +22,20 @@ If you want the containers in the background:
 
 ```powershell
 docker compose up --build -d
+```
+
+If `vision-api` and `vision-web` already exist and you only need to add the
+dedicated PostgreSQL container, start just the database first:
+
+```powershell
+docker compose up -d vision-db
+```
+
+Then restart only the API so it picks up the internal Docker database host
+(`vision-db:5432`). The web container can keep running:
+
+```powershell
+docker compose up -d --no-deps --force-recreate vision-api
 ```
 
 When running in Docker, these services are available:
@@ -54,7 +68,7 @@ To stream logs live:
 docker compose logs -f vision-api
 ```
 
-If later you decide to run startup migrations from the API container, change this in `.env`:
+Startup migrations are controlled from `.env`:
 
 ```text
 RUN_MIGRATIONS=true
