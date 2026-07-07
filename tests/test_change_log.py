@@ -48,11 +48,25 @@ class ChangeLogTests(unittest.TestCase):
             station_pair="ART_ENDFORM_1859",
             change_date=date(2026, 7, 7),
             category="Lots",
-            description="  Material lot change  ",
+            description="  Material lot change completed  ",
         )
 
         _, params = db.calls[0]
-        self.assertEqual(params[-1], "Material lot change")
+        self.assertEqual(params[-1], "Material lot change completed")
+
+    def test_create_entry_requires_description_minimum_length(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "description must be at least 20 characters"):
+            change_log.create_entry(
+                db,
+                station_pair="ART_ENDFORM_1859",
+                change_date=date(2026, 7, 7),
+                category="Lots",
+                description="short description",
+            )
+
+        self.assertEqual(db.calls, [])
 
     def test_update_entry_rejects_explicit_blank_description(self):
         db = FakeChangeLogDb()

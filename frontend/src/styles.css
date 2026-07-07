@@ -782,27 +782,41 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-x: auto;
 }
 
 .change-log-table {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0 5px;
 }
 
-.change-log-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--surface-muted);
+.change-log-table th {
+  padding: 0 10px 6px;
+  color: var(--text-faint);
   font-size: 12.5px;
+  font-weight: 750;
+  text-align: left;
 }
 
-.change-log-screen .change-log-row {
+.change-log-row td {
+  padding: 8px 10px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.change-log-row td:first-child {
+  border-left: 1px solid var(--border);
+  border-radius: 6px 0 0 6px;
+}
+
+.change-log-row td:last-child {
+  border-right: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
 }
 
 .change-log-row-date {
@@ -840,11 +854,14 @@ button:focus-visible {
 }
 
 .change-log-row-desc {
-  flex: 1 1 auto;
   color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 520px;
+  white-space: normal;
+}
+
+.change-log-row-actions {
+  width: 52px;
+  text-align: right;
 }
 
 /* ---------- Status banners ---------- */

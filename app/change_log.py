@@ -21,6 +21,7 @@ ALTER TABLE change_log_entries ADD COLUMN IF NOT EXISTS change_time TIME;
 
 VALID_SIDES = {"left", "right", "both"}
 VALID_CATEGORIES = {"Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"}
+DESCRIPTION_MIN_LENGTH = 20
 
 
 def ensure_schema(db):
@@ -63,6 +64,8 @@ def _resolve_description(description, required=False):
     cleaned = str(description).strip()
     if not cleaned:
         raise ValueError("description is required")
+    if len(cleaned) < DESCRIPTION_MIN_LENGTH:
+        raise ValueError(f"description must be at least {DESCRIPTION_MIN_LENGTH} characters")
     return cleaned
 
 

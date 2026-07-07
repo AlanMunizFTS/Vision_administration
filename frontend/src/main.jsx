@@ -1493,12 +1493,13 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const isOther = category === "Other";
+  const descriptionMinLength = 20;
 
   async function submit(event) {
     event.preventDefault();
     if (!stationPair || !changeDate) return;
     if (isOther && !label.trim()) return;
-    if (!description.trim()) return;
+    if (description.trim().length < descriptionMinLength) return;
     setSaving(true);
     try {
       await onCreate({
@@ -1571,7 +1572,14 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
       ) : null}
       <label>
         Description
-        <input type="text" placeholder="Details, work order, etc." value={description} onChange={(e) => setDescription(e.target.value)} required />
+        <input
+          type="text"
+          placeholder="Details, work order, etc."
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          minLength={descriptionMinLength}
+          required
+        />
       </label>
       <button type="submit" className="button-primary" disabled={saving}>
         <Plus size={15} /> Log Change
@@ -1625,21 +1633,40 @@ function ChangeLogScreen({ entries, onRefresh }) {
       </header>
 
       <section className="change-log-screen">
-        <div className="change-log-table">
-          {sortedEntries.length ? sortedEntries.map((entry) => (
-            <div className="change-log-row" key={entry.id}>
-              <span className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</span>
-              <span className="change-log-row-machine">{stationPairName(entry.station_pair)}</span>
-              <span className="change-log-row-side">{entry.side}</span>
-              <span className="change-log-row-category">{entry.category}</span>
-              {entry.category === "Other" ? <span className="change-log-row-label">{entry.label}</span> : null}
-              {entry.description ? <span className="change-log-row-desc">{entry.description}</span> : <span className="change-log-row-desc">No description</span>}
-              <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          )) : <div className="empty-option">No logs yet. Add one from Add Log.</div>}
-        </div>
+        <table className="change-log-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Machine</th>
+              <th>Side</th>
+              <th>Category</th>
+              <th>Label</th>
+              <th>Description</th>
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedEntries.length ? sortedEntries.map((entry) => (
+              <tr className="change-log-row" key={entry.id}>
+                <td className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</td>
+                <td className="change-log-row-machine">{stationPairName(entry.station_pair)}</td>
+                <td className="change-log-row-side">{entry.side}</td>
+                <td><span className="change-log-row-category">{entry.category}</span></td>
+                <td className="change-log-row-label">{entry.category === "Other" ? entry.label : ""}</td>
+                <td className="change-log-row-desc">{entry.description || "No description"}</td>
+                <td className="change-log-row-actions">
+                  <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td className="empty-option" colSpan="7">No logs yet. Add one from Add Log.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </section>
     </>
   );
