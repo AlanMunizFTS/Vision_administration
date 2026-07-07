@@ -7,13 +7,20 @@ Local API and dashboard for querying reports from `public.model_results_central`
 Requirements:
 
 - Docker Desktop running.
-- PostgreSQL available on your PC or another reachable host.
-- `.env` populated with real PostgreSQL connection values.
+- `.env` populated with the project PostgreSQL values.
+
+The Docker stack includes its own dedicated PostgreSQL container, so it does not need to reuse another local database service. Automatic SQL migrations are controlled with `RUN_MIGRATIONS`.
 
 Recommended startup:
 
 ```powershell
 docker compose up --build
+```
+
+If you want the containers in the background:
+
+```powershell
+docker compose up --build -d
 ```
 
 When running in Docker, these services are available:
@@ -22,6 +29,7 @@ When running in Docker, these services are available:
 Dashboard: http://127.0.0.1:3000
 API:       http://127.0.0.1:8000
 API Docs:  http://127.0.0.1:8000/docs
+Postgres:  127.0.0.1:5433
 ```
 
 The dashboard lets you review the whole plant, combined LEFT+RIGHT machines, or individual heads. It includes filters for date, machine, and `part_number`, day-by-day charts, per-condition defects, top 3 history, glidepath targets, process-change markers, and Excel export.
@@ -45,11 +53,13 @@ To stream logs live:
 docker compose logs -f vision-api
 ```
 
-Note: inside Docker, `127.0.0.1` points to the container, not your PC. That is why `docker-compose.yml` uses `host.docker.internal` as the default `DB_HOST`. If PostgreSQL is running on another machine, add this to `.env`:
+If later you decide to run startup migrations from the API container, change this in `.env`:
 
 ```text
-API_DB_HOST=192.168.x.x
+RUN_MIGRATIONS=true
 ```
+
+Inside Docker, the API connects to the `vision-db` service over the Compose network. Outside Docker, local tools can reach the same database with the `DB_*` values from `.env`, which default to `127.0.0.1:5433`.
 
 ## Run Without Docker
 

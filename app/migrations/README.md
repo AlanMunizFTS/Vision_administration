@@ -1,7 +1,8 @@
 # Database Migrations
 
-The API runs these migrations automatically on startup against the database
-configured in `.env`.
+The API can run these migrations on startup against the database configured in `.env`.
+This behavior is controlled with `RUN_MIGRATIONS`. The Docker stack sets it to `false`
+so containers can be created without applying migrations.
 
 Applied files are tracked in `public.schema_migrations`, so already-applied
 migrations are skipped. The current SQL files also use `IF NOT EXISTS`, so they

@@ -1,3 +1,4 @@
+import os
 from datetime import date, time
 from io import BytesIO
 
@@ -19,9 +20,14 @@ app = FastAPI(
 )
 
 
+def _run_migrations_on_startup():
+    return os.getenv("RUN_MIGRATIONS", "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
 @app.on_event("startup")
 def startup_event():
-    run_migrations()
+    if _run_migrations_on_startup():
+        run_migrations()
     glidepath.ensure_schema(get_db())
     change_log.ensure_schema(get_db())
 
