@@ -1495,11 +1495,24 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
   const isOther = category === "Other";
   const descriptionMinLength = 20;
 
+  function descriptionError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Description is required.";
+    if (trimmed.length < descriptionMinLength) return `Description must have at least ${descriptionMinLength} non-space characters.`;
+    return "";
+  }
+
+  function syncDescriptionValidation(input) {
+    input.setCustomValidity(descriptionError(input.value));
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (!stationPair || !changeDate) return;
     if (isOther && !label.trim()) return;
-    if (description.trim().length < descriptionMinLength) return;
+    const descriptionInput = event.currentTarget.elements.description;
+    syncDescriptionValidation(descriptionInput);
+    if (!event.currentTarget.reportValidity()) return;
     setSaving(true);
     try {
       await onCreate({
@@ -1574,10 +1587,14 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
         Description
         <input
           type="text"
+          name="description"
           placeholder="Details, work order, etc."
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          minLength={descriptionMinLength}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            syncDescriptionValidation(e.target);
+          }}
+          onInvalid={(e) => syncDescriptionValidation(e.target)}
           required
         />
       </label>
