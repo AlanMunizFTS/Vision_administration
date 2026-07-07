@@ -10,6 +10,7 @@ Requirements:
 - `.env` populated with the project PostgreSQL values.
 
 The Docker stack includes its own dedicated PostgreSQL container, so it does not need to reuse another local database service. Automatic SQL migrations are controlled with `RUN_MIGRATIONS`.
+The same `DB_*` variables are used both to initialize the PostgreSQL container and to connect the app to that database.
 
 Recommended startup:
 

@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: vision_administration_db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-vision_administration}
-      POSTGRES_USER: ${POSTGRES_USER:-vision_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vision_admin_dev}
+      POSTGRES_DB: ${DB_NAME:-vision_administration}
+      POSTGRES_USER: ${DB_USER:-vision_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-vision_admin_dev}
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
       - vision_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vision_admin} -d ${POSTGRES_DB:-vision_administration}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-vision_admin} -d ${DB_NAME:-vision_administration}"]
       interval: 10s
       timeout: 5s
       retries: 5
