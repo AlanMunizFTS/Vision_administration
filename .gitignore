@@ -11,3 +11,4 @@ frontend/node_modules/
 app/machines.json
 app/machines.local.json
 app/machines.*.json
+Database_*/
