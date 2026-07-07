@@ -9,7 +9,7 @@ Local dashboard and API for analyzing vision results from `public.model_results_
 ## Root
 
 - `README.md`: run guide, main endpoints, and Excel report usage.
-- `docker-compose.yml`: starts the `vision-api` backend and `vision-web` frontend.
+- `docker-compose.yml`: starts the `vision-db` PostgreSQL service, the `vision-api` backend, and the `vision-web` frontend.
 - `Dockerfile`: FastAPI backend image.
 - `requirements.txt`: Python dependencies for the backend and Excel generator.
 - `.env.example`: required variables for PostgreSQL connectivity.

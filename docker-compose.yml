@@ -1,13 +1,35 @@
 services:
+  vision-db:
+    image: postgres:16-alpine
+    container_name: vision_administration_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-vision_administration}
+      POSTGRES_USER: ${DB_USER:-vision_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-vision_admin_dev}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - vision_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-vision_admin} -d ${DB_NAME:-vision_administration}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   vision-api:
     build:
       context: .
     container_name: vision_administration_api
     env_file:
       - .env
+    depends_on:
+      vision-db:
+        condition: service_healthy
     environment:
-      DB_HOST: ${API_DB_HOST:-host.docker.internal}
-      DB_PORT: ${API_DB_PORT:-5432}
+      DB_HOST: vision-db
+      DB_PORT: 5432
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -23,3 +45,6 @@ services:
     ports:
       - "${WEB_PORT:-3000}:80"
     restart: unless-stopped
+
+volumes:
+  vision_db_data:
