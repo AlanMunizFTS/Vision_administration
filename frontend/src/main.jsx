@@ -1483,7 +1483,7 @@ function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
   );
 }
 
-function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
+function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [side, setSide] = useState("both");
   const [changeDate, setChangeDate] = useState("");
@@ -1544,7 +1544,14 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
       <div className="subproject-field-row">
         <label>
           Machine
-          <select value={stationPair} onChange={(e) => setStationPair(e.target.value)} disabled={optionsLoading || !pairOptions.length}>
+          <select
+            value={stationPair}
+            onChange={(e) => {
+              onSuccessMessageClear();
+              setStationPair(e.target.value);
+            }}
+            disabled={optionsLoading || !pairOptions.length}
+          >
             {pairOptions.map((pair) => (
               <option key={pair} value={pair}>{stationPairName(pair)}</option>
             ))}
@@ -1552,7 +1559,10 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
         </label>
         <label>
           Side
-          <select value={side} onChange={(e) => setSide(e.target.value)}>
+          <select value={side} onChange={(e) => {
+            onSuccessMessageClear();
+            setSide(e.target.value);
+          }}>
             <option value="both">Both</option>
             <option value="left">Left</option>
             <option value="right">Right</option>
@@ -1562,16 +1572,25 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
       <div className="subproject-field-row">
         <label>
           Date
-          <input type="date" value={changeDate} onChange={(e) => setChangeDate(e.target.value)} required />
+          <input type="date" value={changeDate} onChange={(e) => {
+            onSuccessMessageClear();
+            setChangeDate(e.target.value);
+          }} required />
         </label>
         <label>
           Time (optional)
-          <input type="time" value={changeTime} onChange={(e) => setChangeTime(e.target.value)} />
+          <input type="time" value={changeTime} onChange={(e) => {
+            onSuccessMessageClear();
+            setChangeTime(e.target.value);
+          }} />
         </label>
       </div>
       <label>
         Category
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+        <select value={category} onChange={(e) => {
+          onSuccessMessageClear();
+          setCategory(e.target.value);
+        }}>
           {CHANGE_LOG_CATEGORIES.map((option) => (
             <option key={option} value={option}>{option}</option>
           ))}
@@ -1584,7 +1603,10 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
             type="text"
             placeholder="e.g. Fixture swap"
             value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            onChange={(e) => {
+              onSuccessMessageClear();
+              setLabel(e.target.value);
+            }}
             required
           />
         </label>
@@ -1597,6 +1619,7 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
           placeholder="Details, work order, etc."
           value={description}
           onChange={(e) => {
+            onSuccessMessageClear();
             setDescription(e.target.value);
             syncDescriptionValidation(e.target);
           }}
@@ -1612,9 +1635,12 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
 }
 
 function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
+  const [successMessage, setSuccessMessage] = useState("");
+
   async function createEntry(payload) {
     await apiRequest("/api/v1/change-log", { method: "POST", body: JSON.stringify(payload) });
     onRefresh();
+    setSuccessMessage("New log added.");
   }
 
   return (
@@ -1628,8 +1654,14 @@ function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
         </div>
 
         {optionsLoading ? <div className="loading add-log-loading">Loading machines...</div> : null}
+        {successMessage ? <div className="success add-log-success">{successMessage}</div> : null}
 
-        <NewChangeLogForm pairOptions={pairOptions} optionsLoading={optionsLoading} onCreate={createEntry} />
+        <NewChangeLogForm
+          pairOptions={pairOptions}
+          optionsLoading={optionsLoading}
+          onCreate={createEntry}
+          onSuccessMessageClear={() => setSuccessMessage("")}
+        />
       </div>
     </div>
   );

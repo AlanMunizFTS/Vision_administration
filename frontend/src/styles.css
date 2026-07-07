@@ -867,7 +867,8 @@ button:focus-visible {
 /* ---------- Status banners ---------- */
 
 .error,
-.loading {
+.loading,
+.success {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -890,7 +891,17 @@ button:focus-visible {
   border: 1px solid #bfdbfe;
 }
 
+.success {
+  background: var(--good-soft);
+  color: var(--good-soft-text);
+  border: 1px solid #bbf7d0;
+}
+
 .add-log-loading {
+  margin-bottom: 12px;
+}
+
+.add-log-success {
   margin-bottom: 12px;
 }
 
