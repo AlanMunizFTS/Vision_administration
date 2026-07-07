@@ -778,20 +778,45 @@ button:focus-visible {
   gap: 4px;
 }
 
-.change-log-table {
+.change-log-screen {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+  overflow-x: auto;
 }
 
-.change-log-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--surface-muted);
+.change-log-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0 5px;
+}
+
+.change-log-table th {
+  padding: 0 10px 6px;
+  color: var(--text-faint);
   font-size: 12.5px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.change-log-row td {
+  padding: 8px 10px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.change-log-row td:first-child {
+  border-left: 1px solid var(--border);
+  border-radius: 6px 0 0 6px;
+}
+
+.change-log-row td:last-child {
+  border-right: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
 }
 
 .change-log-row-date {
@@ -829,17 +854,21 @@ button:focus-visible {
 }
 
 .change-log-row-desc {
-  flex: 1 1 auto;
   color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 520px;
+  white-space: normal;
+}
+
+.change-log-row-actions {
+  width: 52px;
+  text-align: right;
 }
 
 /* ---------- Status banners ---------- */
 
 .error,
-.loading {
+.loading,
+.success {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -860,6 +889,20 @@ button:focus-visible {
   background: var(--info-soft);
   color: var(--info-soft-text);
   border: 1px solid #bfdbfe;
+}
+
+.success {
+  background: var(--good-soft);
+  color: var(--good-soft-text);
+  border: 1px solid #bbf7d0;
+}
+
+.add-log-loading {
+  margin-bottom: 12px;
+}
+
+.add-log-success {
+  margin-bottom: 12px;
 }
 
 /* ---------- Tabs ---------- */

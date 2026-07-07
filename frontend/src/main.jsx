@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -1073,6 +1073,7 @@ function headOptions(options) {
 
 function Sidebar({
   options,
+  activeScreen,
   viewLevel,
   onSelectOverall,
   onSelectMachine,
@@ -1082,7 +1083,8 @@ function Sidebar({
   onApplyFilters,
   loading,
   onOpenGlidepath,
-  onOpenChangeLog
+  onOpenChangeLog,
+  onOpenChanges
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(false);
@@ -1097,7 +1099,7 @@ function Sidebar({
       </div>
 
       <div className="nav-group">
-        <button type="button" className={`nav-item ${viewLevel.type === "overall" ? "active" : ""}`} onClick={onSelectOverall}>
+        <button type="button" className={`nav-item ${activeScreen === "summary" && viewLevel.type === "overall" ? "active" : ""}`} onClick={onSelectOverall}>
           <span className="nav-item-label"><Layers size={15} /> Overall</span>
         </button>
 
@@ -1109,7 +1111,7 @@ function Sidebar({
           <div className="nav-subgroup">
             <button
               type="button"
-              className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL ? "active" : ""}`}
+              className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL ? "active" : ""}`}
               onClick={() => onSelectMachine(MACHINE_ALL)}
             >
               <span>All</span>
@@ -1118,7 +1120,7 @@ function Sidebar({
               <button
                 key={pair}
                 type="button"
-                className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === pair ? "active" : ""}`}
+                className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "machine" && viewLevel.pair === pair ? "active" : ""}`}
                 onClick={() => onSelectMachine(pair)}
               >
                 <span>{stationPairName(pair)}</span>
@@ -1137,7 +1139,7 @@ function Sidebar({
               <button
                 key={group.pair}
                 type="button"
-                className={`nav-subitem ${viewLevel.type === "head" && viewLevel.pair === group.pair ? "active" : ""}`}
+                className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "head" && viewLevel.pair === group.pair ? "active" : ""}`}
                 onClick={() => onSelectHead(group.pair)}
               >
                 <span>{stationPairName(group.pair)}</span>
@@ -1170,6 +1172,9 @@ function Sidebar({
         </button>
         <button type="button" className="nav-item" onClick={onOpenChangeLog}>
           <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        </button>
+        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
+          <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
         </button>
       </div>
     </nav>
@@ -1478,7 +1483,7 @@ function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
   );
 }
 
-function NewChangeLogForm({ pairOptions, onCreate }) {
+function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [side, setSide] = useState("both");
   const [changeDate, setChangeDate] = useState("");
@@ -1488,11 +1493,32 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const isOther = category === "Other";
+  const descriptionMinLength = 20;
+
+  function descriptionError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Description is required.";
+    if (trimmed.length < descriptionMinLength) return `Description must have at least ${descriptionMinLength} non-space characters.`;
+    return "";
+  }
+
+  function syncDescriptionValidation(input) {
+    input.setCustomValidity(descriptionError(input.value));
+  }
+
+  useEffect(() => {
+    if (!stationPair && pairOptions.length) {
+      setStationPair(pairOptions[0]);
+    }
+  }, [pairOptions, stationPair]);
 
   async function submit(event) {
     event.preventDefault();
     if (!stationPair || !changeDate) return;
     if (isOther && !label.trim()) return;
+    const descriptionInput = event.currentTarget.elements.description;
+    syncDescriptionValidation(descriptionInput);
+    if (!event.currentTarget.reportValidity()) return;
     setSaving(true);
     try {
       await onCreate({
@@ -1502,7 +1528,7 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
         change_time: changeTime || null,
         category,
         label: isOther ? label.trim() : null,
-        description: description.trim() || null
+        description: description.trim()
       });
       setChangeDate("");
       setChangeTime("");
@@ -1518,7 +1544,14 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
       <div className="subproject-field-row">
         <label>
           Machine
-          <select value={stationPair} onChange={(e) => setStationPair(e.target.value)}>
+          <select
+            value={stationPair}
+            onChange={(e) => {
+              onSuccessMessageClear();
+              setStationPair(e.target.value);
+            }}
+            disabled={optionsLoading || !pairOptions.length}
+          >
             {pairOptions.map((pair) => (
               <option key={pair} value={pair}>{stationPairName(pair)}</option>
             ))}
@@ -1526,7 +1559,10 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
         </label>
         <label>
           Side
-          <select value={side} onChange={(e) => setSide(e.target.value)}>
+          <select value={side} onChange={(e) => {
+            onSuccessMessageClear();
+            setSide(e.target.value);
+          }}>
             <option value="both">Both</option>
             <option value="left">Left</option>
             <option value="right">Right</option>
@@ -1536,55 +1572,76 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
       <div className="subproject-field-row">
         <label>
           Date
-          <input type="date" value={changeDate} onChange={(e) => setChangeDate(e.target.value)} required />
+          <input type="date" value={changeDate} onChange={(e) => {
+            onSuccessMessageClear();
+            setChangeDate(e.target.value);
+          }} required />
         </label>
         <label>
           Time (optional)
-          <input type="time" value={changeTime} onChange={(e) => setChangeTime(e.target.value)} />
+          <input type="time" value={changeTime} onChange={(e) => {
+            onSuccessMessageClear();
+            setChangeTime(e.target.value);
+          }} />
         </label>
       </div>
       <label>
         Category
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+        <select value={category} onChange={(e) => {
+          onSuccessMessageClear();
+          setCategory(e.target.value);
+        }}>
           {CHANGE_LOG_CATEGORIES.map((option) => (
             <option key={option} value={option}>{option}</option>
           ))}
         </select>
       </label>
+      {isOther ? (
+        <label>
+          Label
+          <input
+            type="text"
+            placeholder="e.g. Fixture swap"
+            value={label}
+            onChange={(e) => {
+              onSuccessMessageClear();
+              setLabel(e.target.value);
+            }}
+            required
+          />
+        </label>
+      ) : null}
       <label>
-        Label
+        Description
         <input
           type="text"
-          placeholder={isOther ? "e.g. Fixture swap" : category}
-          value={isOther ? label : category}
-          onChange={(e) => setLabel(e.target.value)}
-          disabled={!isOther}
-          required={isOther}
+          name="description"
+          placeholder="Details, work order, etc."
+          value={description}
+          onChange={(e) => {
+            onSuccessMessageClear();
+            setDescription(e.target.value);
+            syncDescriptionValidation(e.target);
+          }}
+          onInvalid={(e) => syncDescriptionValidation(e.target)}
+          required
         />
       </label>
-      <label>
-        {isOther ? "Description (optional)" : "Comments (optional)"}
-        <input type="text" placeholder="Details, work order, etc." value={description} onChange={(e) => setDescription(e.target.value)} />
-      </label>
-      <button type="submit" className="button-primary" disabled={saving}>
+      <button type="submit" className="button-primary" disabled={saving || optionsLoading || !pairOptions.length}>
         <Plus size={15} /> Log Change
       </button>
     </form>
   );
 }
 
-function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
+function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
+  const [successMessage, setSuccessMessage] = useState("");
+
   async function createEntry(payload) {
     await apiRequest("/api/v1/change-log", { method: "POST", body: JSON.stringify(payload) });
     onRefresh();
+    setSuccessMessage("New log added.");
   }
-
-  async function deleteEntry(entryId) {
-    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
-    onRefresh();
-  }
-
-  const sortedEntries = [...entries].sort((a, b) => b.change_date.localeCompare(a.change_date));
 
   return (
     <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -1596,25 +1653,79 @@ function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
           </button>
         </div>
 
-        <NewChangeLogForm pairOptions={pairOptions} onCreate={createEntry} />
+        {optionsLoading ? <div className="loading add-log-loading">Loading machines...</div> : null}
+        {successMessage ? <div className="success add-log-success">{successMessage}</div> : null}
 
-        <div className="change-log-table">
-          {sortedEntries.length ? sortedEntries.map((entry) => (
-            <div className="change-log-row" key={entry.id}>
-              <span className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</span>
-              <span className="change-log-row-machine">{stationPairName(entry.station_pair)}</span>
-              <span className="change-log-row-side">{entry.side}</span>
-              <span className="change-log-row-category">{entry.category}</span>
-              {entry.category === "Other" ? <span className="change-log-row-label">{entry.label}</span> : null}
-              {entry.description ? <span className="change-log-row-desc">{entry.description}</span> : null}
-              <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          )) : <div className="empty-option">No logs yet. Add one above.</div>}
-        </div>
+        <NewChangeLogForm
+          pairOptions={pairOptions}
+          optionsLoading={optionsLoading}
+          onCreate={createEntry}
+          onSuccessMessageClear={() => setSuccessMessage("")}
+        />
       </div>
     </div>
+  );
+}
+
+function ChangeLogScreen({ entries, onRefresh }) {
+  async function deleteEntry(entryId) {
+    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  const sortedEntries = [...entries].sort((a, b) => {
+    const dateCompare = b.change_date.localeCompare(a.change_date);
+    if (dateCompare !== 0) return dateCompare;
+    return (b.change_time || "").localeCompare(a.change_time || "");
+  });
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <span className="eyebrow">Vision - Quality Analytics</span>
+          <h1>Changes</h1>
+          <p>Process change log</p>
+        </div>
+      </header>
+
+      <section className="change-log-screen">
+        <table className="change-log-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Machine</th>
+              <th>Side</th>
+              <th>Category</th>
+              <th>Label</th>
+              <th>Description</th>
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedEntries.length ? sortedEntries.map((entry) => (
+              <tr className="change-log-row" key={entry.id}>
+                <td className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</td>
+                <td className="change-log-row-machine">{stationPairName(entry.station_pair)}</td>
+                <td className="change-log-row-side">{entry.side}</td>
+                <td><span className="change-log-row-category">{entry.category}</span></td>
+                <td className="change-log-row-label">{entry.category === "Other" ? entry.label : ""}</td>
+                <td className="change-log-row-desc">{entry.description || "No description"}</td>
+                <td className="change-log-row-actions">
+                  <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td className="empty-option" colSpan="7">No logs yet. Add one from Add Log.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    </>
   );
 }
 
@@ -1634,6 +1745,7 @@ function filterDataToStations(data, allowedStations) {
 
 function App() {
   const [options, setOptions] = useState({ source_stations: [], station_pairs: [], part_numbers: [] });
+  const [optionsLoading, setOptionsLoading] = useState(true);
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
     station_pairs: [],
@@ -1642,6 +1754,7 @@ function App() {
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [loadedData, setLoadedData] = useState(null);
   const [loadedServerFilters, setLoadedServerFilters] = useState(null);
+  const [activeScreen, setActiveScreen] = useState("summary");
   const [activeTab, setActiveTab] = useState("daily");
   const [viewLevel, setViewLevel] = useState({ type: "overall" });
   const [loading, setLoading] = useState(false);
@@ -1653,11 +1766,13 @@ function App() {
   const [showChangeLogManager, setShowChangeLogManager] = useState(false);
 
   useEffect(() => {
+    setOptionsLoading(true);
     fetchJson("/api/v1/options")
       .then((payload) => {
         setOptions(payload);
       })
-      .catch((exc) => setError(exc.message));
+      .catch((exc) => setError(exc.message))
+      .finally(() => setOptionsLoading(false));
   }, []);
 
   const reloadProjects = () => {
@@ -1750,6 +1865,7 @@ function App() {
   const canDownloadExcel = Boolean(visibleData) && !loading && !exporting && sameFilters(apiFilters, appliedFilters);
 
   function selectMachine(pair) {
+    setActiveScreen("summary");
     setViewLevel({ type: "machine", pair });
     const nextStationPairs = pair && pair !== MACHINE_ALL ? [pair] : [];
     setFilters((current) => ({ ...current, station_pairs: nextStationPairs }));
@@ -1757,12 +1873,14 @@ function App() {
   }
 
   function selectHead(pair) {
+    setActiveScreen("summary");
     setViewLevel({ type: "head", pair });
     setFilters((current) => ({ ...current, station_pairs: [pair] }));
     applyFilters({ ...filters, station_pairs: [pair] });
   }
 
   function selectOverall() {
+    setActiveScreen("summary");
     setViewLevel({ type: "overall" });
     setFilters((current) => ({ ...current, station_pairs: [] }));
     applyFilters({ ...filters, station_pairs: [] });
@@ -1810,6 +1928,7 @@ function App() {
     <div className="app-shell">
       <Sidebar
         options={options}
+        activeScreen={activeScreen}
         viewLevel={viewLevel}
         onSelectOverall={selectOverall}
         onSelectMachine={selectMachine}
@@ -1820,6 +1939,7 @@ function App() {
         loading={loading}
         onOpenGlidepath={() => setShowGlidepathManager(true)}
         onOpenChangeLog={() => setShowChangeLogManager(true)}
+        onOpenChanges={() => setActiveScreen("changes")}
       />
       {showGlidepathManager ? (
         <GlidepathManager
@@ -1831,13 +1951,17 @@ function App() {
       ) : null}
       {showChangeLogManager ? (
         <ChangeLogManager
-          entries={changeLogEntries}
           pairOptions={stationPairOptions(options)}
+          optionsLoading={optionsLoading}
           onClose={() => setShowChangeLogManager(false)}
           onRefresh={reloadChangeLog}
         />
       ) : null}
       <main>
+        {activeScreen === "changes" ? (
+          <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
+        ) : (
+          <>
         <header className="topbar">
           <div>
             <span className="eyebrow">Vision - Quality Analytics</span>
@@ -1924,6 +2048,8 @@ function App() {
           <Top3Tab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
         ) : null}
         {!visibleData && !loading ? <Empty label="No data loaded" /> : null}
+          </>
+        )}
       </main>
     </div>
   );
