@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from app import change_log, glidepath, reports
 from app.db import close_db, get_db
+from app.migrator import run_migrations
+from app.sync_runner import sync_runner
 from scripts.generate_excel_report import ReportParams, build_workbook, default_period
 
 
@@ -19,6 +21,7 @@ app = FastAPI(
 
 @app.on_event("startup")
 def startup_event():
+    run_migrations()
     glidepath.ensure_schema(get_db())
     change_log.ensure_schema(get_db())
 
@@ -56,6 +59,16 @@ def health():
 @app.get("/api/v1/options")
 def options(db=Depends(db_dependency)):
     return reports.get_options(db)
+
+
+@app.post("/api/v1/sync-db")
+def start_database_sync():
+    return sync_runner.start()
+
+
+@app.get("/api/v1/sync-db")
+def database_sync_status():
+    return sync_runner.status()
 
 
 @app.get("/api/v1/results")
