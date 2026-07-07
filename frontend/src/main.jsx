@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -1073,6 +1073,7 @@ function headOptions(options) {
 
 function Sidebar({
   options,
+  activeScreen,
   viewLevel,
   onSelectOverall,
   onSelectMachine,
@@ -1082,7 +1083,8 @@ function Sidebar({
   onApplyFilters,
   loading,
   onOpenGlidepath,
-  onOpenChangeLog
+  onOpenChangeLog,
+  onOpenChanges
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(false);
@@ -1097,7 +1099,7 @@ function Sidebar({
       </div>
 
       <div className="nav-group">
-        <button type="button" className={`nav-item ${viewLevel.type === "overall" ? "active" : ""}`} onClick={onSelectOverall}>
+        <button type="button" className={`nav-item ${activeScreen === "summary" && viewLevel.type === "overall" ? "active" : ""}`} onClick={onSelectOverall}>
           <span className="nav-item-label"><Layers size={15} /> Overall</span>
         </button>
 
@@ -1109,7 +1111,7 @@ function Sidebar({
           <div className="nav-subgroup">
             <button
               type="button"
-              className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL ? "active" : ""}`}
+              className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL ? "active" : ""}`}
               onClick={() => onSelectMachine(MACHINE_ALL)}
             >
               <span>All</span>
@@ -1118,7 +1120,7 @@ function Sidebar({
               <button
                 key={pair}
                 type="button"
-                className={`nav-subitem ${viewLevel.type === "machine" && viewLevel.pair === pair ? "active" : ""}`}
+                className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "machine" && viewLevel.pair === pair ? "active" : ""}`}
                 onClick={() => onSelectMachine(pair)}
               >
                 <span>{stationPairName(pair)}</span>
@@ -1137,7 +1139,7 @@ function Sidebar({
               <button
                 key={group.pair}
                 type="button"
-                className={`nav-subitem ${viewLevel.type === "head" && viewLevel.pair === group.pair ? "active" : ""}`}
+                className={`nav-subitem ${activeScreen === "summary" && viewLevel.type === "head" && viewLevel.pair === group.pair ? "active" : ""}`}
                 onClick={() => onSelectHead(group.pair)}
               >
                 <span>{stationPairName(group.pair)}</span>
@@ -1170,6 +1172,9 @@ function Sidebar({
         </button>
         <button type="button" className="nav-item" onClick={onOpenChangeLog}>
           <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        </button>
+        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
+          <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
         </button>
       </div>
     </nav>
@@ -1493,6 +1498,7 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
     event.preventDefault();
     if (!stationPair || !changeDate) return;
     if (isOther && !label.trim()) return;
+    if (!description.trim()) return;
     setSaving(true);
     try {
       await onCreate({
@@ -1502,7 +1508,7 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
         change_time: changeTime || null,
         category,
         label: isOther ? label.trim() : null,
-        description: description.trim() || null
+        description: description.trim()
       });
       setChangeDate("");
       setChangeTime("");
@@ -1551,20 +1557,21 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
           ))}
         </select>
       </label>
+      {isOther ? (
+        <label>
+          Label
+          <input
+            type="text"
+            placeholder="e.g. Fixture swap"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            required
+          />
+        </label>
+      ) : null}
       <label>
-        Label
-        <input
-          type="text"
-          placeholder={isOther ? "e.g. Fixture swap" : category}
-          value={isOther ? label : category}
-          onChange={(e) => setLabel(e.target.value)}
-          disabled={!isOther}
-          required={isOther}
-        />
-      </label>
-      <label>
-        {isOther ? "Description (optional)" : "Comments (optional)"}
-        <input type="text" placeholder="Details, work order, etc." value={description} onChange={(e) => setDescription(e.target.value)} />
+        Description
+        <input type="text" placeholder="Details, work order, etc." value={description} onChange={(e) => setDescription(e.target.value)} required />
       </label>
       <button type="submit" className="button-primary" disabled={saving}>
         <Plus size={15} /> Log Change
@@ -1573,18 +1580,11 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
   );
 }
 
-function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
+function ChangeLogManager({ pairOptions, onClose, onRefresh }) {
   async function createEntry(payload) {
     await apiRequest("/api/v1/change-log", { method: "POST", body: JSON.stringify(payload) });
     onRefresh();
   }
-
-  async function deleteEntry(entryId) {
-    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
-    onRefresh();
-  }
-
-  const sortedEntries = [...entries].sort((a, b) => b.change_date.localeCompare(a.change_date));
 
   return (
     <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -1597,7 +1597,34 @@ function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
         </div>
 
         <NewChangeLogForm pairOptions={pairOptions} onCreate={createEntry} />
+      </div>
+    </div>
+  );
+}
 
+function ChangeLogScreen({ entries, onRefresh }) {
+  async function deleteEntry(entryId) {
+    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  const sortedEntries = [...entries].sort((a, b) => {
+    const dateCompare = b.change_date.localeCompare(a.change_date);
+    if (dateCompare !== 0) return dateCompare;
+    return (b.change_time || "").localeCompare(a.change_time || "");
+  });
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <span className="eyebrow">Vision - Quality Analytics</span>
+          <h1>Changes</h1>
+          <p>Process change log</p>
+        </div>
+      </header>
+
+      <section className="change-log-screen">
         <div className="change-log-table">
           {sortedEntries.length ? sortedEntries.map((entry) => (
             <div className="change-log-row" key={entry.id}>
@@ -1606,15 +1633,15 @@ function ChangeLogManager({ entries, pairOptions, onClose, onRefresh }) {
               <span className="change-log-row-side">{entry.side}</span>
               <span className="change-log-row-category">{entry.category}</span>
               {entry.category === "Other" ? <span className="change-log-row-label">{entry.label}</span> : null}
-              {entry.description ? <span className="change-log-row-desc">{entry.description}</span> : null}
+              {entry.description ? <span className="change-log-row-desc">{entry.description}</span> : <span className="change-log-row-desc">No description</span>}
               <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
                 <Trash2 size={14} />
               </button>
             </div>
-          )) : <div className="empty-option">No logs yet. Add one above.</div>}
+          )) : <div className="empty-option">No logs yet. Add one from Add Log.</div>}
         </div>
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
 
@@ -1642,6 +1669,7 @@ function App() {
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [loadedData, setLoadedData] = useState(null);
   const [loadedServerFilters, setLoadedServerFilters] = useState(null);
+  const [activeScreen, setActiveScreen] = useState("summary");
   const [activeTab, setActiveTab] = useState("daily");
   const [viewLevel, setViewLevel] = useState({ type: "overall" });
   const [loading, setLoading] = useState(false);
@@ -1750,6 +1778,7 @@ function App() {
   const canDownloadExcel = Boolean(visibleData) && !loading && !exporting && sameFilters(apiFilters, appliedFilters);
 
   function selectMachine(pair) {
+    setActiveScreen("summary");
     setViewLevel({ type: "machine", pair });
     const nextStationPairs = pair && pair !== MACHINE_ALL ? [pair] : [];
     setFilters((current) => ({ ...current, station_pairs: nextStationPairs }));
@@ -1757,12 +1786,14 @@ function App() {
   }
 
   function selectHead(pair) {
+    setActiveScreen("summary");
     setViewLevel({ type: "head", pair });
     setFilters((current) => ({ ...current, station_pairs: [pair] }));
     applyFilters({ ...filters, station_pairs: [pair] });
   }
 
   function selectOverall() {
+    setActiveScreen("summary");
     setViewLevel({ type: "overall" });
     setFilters((current) => ({ ...current, station_pairs: [] }));
     applyFilters({ ...filters, station_pairs: [] });
@@ -1810,6 +1841,7 @@ function App() {
     <div className="app-shell">
       <Sidebar
         options={options}
+        activeScreen={activeScreen}
         viewLevel={viewLevel}
         onSelectOverall={selectOverall}
         onSelectMachine={selectMachine}
@@ -1820,6 +1852,7 @@ function App() {
         loading={loading}
         onOpenGlidepath={() => setShowGlidepathManager(true)}
         onOpenChangeLog={() => setShowChangeLogManager(true)}
+        onOpenChanges={() => setActiveScreen("changes")}
       />
       {showGlidepathManager ? (
         <GlidepathManager
@@ -1831,13 +1864,16 @@ function App() {
       ) : null}
       {showChangeLogManager ? (
         <ChangeLogManager
-          entries={changeLogEntries}
           pairOptions={stationPairOptions(options)}
           onClose={() => setShowChangeLogManager(false)}
           onRefresh={reloadChangeLog}
         />
       ) : null}
       <main>
+        {activeScreen === "changes" ? (
+          <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
+        ) : (
+          <>
         <header className="topbar">
           <div>
             <span className="eyebrow">Vision - Quality Analytics</span>
@@ -1924,6 +1960,8 @@ function App() {
           <Top3Tab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
         ) : null}
         {!visibleData && !loading ? <Empty label="No data loaded" /> : null}
+          </>
+        )}
       </main>
     </div>
   );

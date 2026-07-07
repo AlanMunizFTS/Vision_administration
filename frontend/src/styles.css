@@ -778,6 +778,12 @@ button:focus-visible {
   gap: 4px;
 }
 
+.change-log-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .change-log-table {
   display: flex;
   flex-direction: column;
@@ -792,6 +798,11 @@ button:focus-visible {
   border-radius: 6px;
   background: var(--surface-muted);
   font-size: 12.5px;
+}
+
+.change-log-screen .change-log-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .change-log-row-date {

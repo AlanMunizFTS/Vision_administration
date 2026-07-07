@@ -55,6 +55,17 @@ def _resolve_label(category, label):
     return category, category
 
 
+def _resolve_description(description, required=False):
+    if description is None:
+        if required:
+            raise ValueError("description is required")
+        return None
+    cleaned = str(description).strip()
+    if not cleaned:
+        raise ValueError("description is required")
+    return cleaned
+
+
 def create_entry(db, station_pair, change_date, category="Other", label=None, side="both", description=None, change_time=None):
     station_pair = str(station_pair or "").strip()
     if not station_pair:
@@ -63,6 +74,7 @@ def create_entry(db, station_pair, change_date, category="Other", label=None, si
     side = str(side or "both").strip().lower()
     if side not in VALID_SIDES:
         raise ValueError(f"side must be one of {sorted(VALID_SIDES)}")
+    description = _resolve_description(description, required=True)
 
     row = db.fetch_one(
         """
@@ -78,7 +90,7 @@ def create_entry(db, station_pair, change_date, category="Other", label=None, si
 UNSET = object()
 
 
-def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=UNSET, category=None, label=None, side=None, description=None):
+def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=UNSET, category=None, label=None, side=None, description=UNSET):
     fields = []
     params = []
     if station_pair is not None:
@@ -111,7 +123,8 @@ def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=
             raise ValueError(f"side must be one of {sorted(VALID_SIDES)}")
         fields.append("side = %s")
         params.append(cleaned_side)
-    if description is not None:
+    if description is not UNSET:
+        description = _resolve_description(description, required=True)
         fields.append("description = %s")
         params.append(description)
     if not fields:

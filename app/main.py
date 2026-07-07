@@ -562,7 +562,7 @@ def change_log_update(entry_id: int, payload: ChangeLogEntryUpdate, db=Depends(d
             category=payload.category,
             label=payload.label,
             side=payload.side,
-            description=payload.description,
+            description=fields.get("description", change_log.UNSET),
         )
     except ValueError as exc:
         handle_report_error(exc)
