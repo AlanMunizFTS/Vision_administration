@@ -1483,7 +1483,7 @@ function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
   );
 }
 
-function NewChangeLogForm({ pairOptions, onCreate }) {
+function NewChangeLogForm({ pairOptions, optionsLoading, onCreate }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [side, setSide] = useState("both");
   const [changeDate, setChangeDate] = useState("");
@@ -1505,6 +1505,12 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
   function syncDescriptionValidation(input) {
     input.setCustomValidity(descriptionError(input.value));
   }
+
+  useEffect(() => {
+    if (!stationPair && pairOptions.length) {
+      setStationPair(pairOptions[0]);
+    }
+  }, [pairOptions, stationPair]);
 
   async function submit(event) {
     event.preventDefault();
@@ -1538,7 +1544,7 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
       <div className="subproject-field-row">
         <label>
           Machine
-          <select value={stationPair} onChange={(e) => setStationPair(e.target.value)}>
+          <select value={stationPair} onChange={(e) => setStationPair(e.target.value)} disabled={optionsLoading || !pairOptions.length}>
             {pairOptions.map((pair) => (
               <option key={pair} value={pair}>{stationPairName(pair)}</option>
             ))}
@@ -1598,14 +1604,14 @@ function NewChangeLogForm({ pairOptions, onCreate }) {
           required
         />
       </label>
-      <button type="submit" className="button-primary" disabled={saving}>
+      <button type="submit" className="button-primary" disabled={saving || optionsLoading || !pairOptions.length}>
         <Plus size={15} /> Log Change
       </button>
     </form>
   );
 }
 
-function ChangeLogManager({ pairOptions, onClose, onRefresh }) {
+function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
   async function createEntry(payload) {
     await apiRequest("/api/v1/change-log", { method: "POST", body: JSON.stringify(payload) });
     onRefresh();
@@ -1621,7 +1627,9 @@ function ChangeLogManager({ pairOptions, onClose, onRefresh }) {
           </button>
         </div>
 
-        <NewChangeLogForm pairOptions={pairOptions} onCreate={createEntry} />
+        {optionsLoading ? <div className="loading add-log-loading">Loading machines...</div> : null}
+
+        <NewChangeLogForm pairOptions={pairOptions} optionsLoading={optionsLoading} onCreate={createEntry} />
       </div>
     </div>
   );
@@ -1705,6 +1713,7 @@ function filterDataToStations(data, allowedStations) {
 
 function App() {
   const [options, setOptions] = useState({ source_stations: [], station_pairs: [], part_numbers: [] });
+  const [optionsLoading, setOptionsLoading] = useState(true);
   const [filters, setFilters] = useState(() => ({
     ...defaultDateRange(),
     station_pairs: [],
@@ -1725,11 +1734,13 @@ function App() {
   const [showChangeLogManager, setShowChangeLogManager] = useState(false);
 
   useEffect(() => {
+    setOptionsLoading(true);
     fetchJson("/api/v1/options")
       .then((payload) => {
         setOptions(payload);
       })
-      .catch((exc) => setError(exc.message));
+      .catch((exc) => setError(exc.message))
+      .finally(() => setOptionsLoading(false));
   }, []);
 
   const reloadProjects = () => {
@@ -1909,6 +1920,7 @@ function App() {
       {showChangeLogManager ? (
         <ChangeLogManager
           pairOptions={stationPairOptions(options)}
+          optionsLoading={optionsLoading}
           onClose={() => setShowChangeLogManager(false)}
           onRefresh={reloadChangeLog}
         />

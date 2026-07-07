@@ -890,6 +890,10 @@ button:focus-visible {
   border: 1px solid #bfdbfe;
 }
 
+.add-log-loading {
+  margin-bottom: 12px;
+}
+
 /* ---------- Tabs ---------- */
 
 .tabs {
