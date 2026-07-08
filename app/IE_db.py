@@ -153,12 +153,14 @@ def load_config_from_env():
             "user": env_value("SYNC_SSH_USER", required=True),
             "batch_mode": env_bool("SYNC_SSH_BATCH_MODE", True),
             "connect_timeout_seconds": env_int("SYNC_SSH_CONNECT_TIMEOUT_SECONDS", 20),
+            "strict_host_key_checking": env_value("SYNC_SSH_STRICT_HOST_KEY_CHECKING"),
+            "user_known_hosts_file": env_value("SYNC_SSH_USER_KNOWN_HOSTS_FILE"),
             "remote_command": env_value("SYNC_SSH_REMOTE_COMMAND", required=True),
         },
         "postgres": {
             "docker_container": env_value("SYNC_POSTGRES_DOCKER_CONTAINER", "postgres-fts"),
-            "host": first_env_value("SYNC_POSTGRES_HOST", "API_DB_HOST", "DB_HOST"),
-            "port": int(first_env_value("SYNC_POSTGRES_PORT", "API_DB_PORT", "DB_PORT", default="5432")),
+            "host": first_env_value("SYNC_POSTGRES_HOST", "API_DB_HOST"),
+            "port": int(first_env_value("SYNC_POSTGRES_PORT", "API_DB_PORT", default="5432")),
             "database": env_value("SYNC_POSTGRES_DATABASE", os.getenv("DB_NAME", "postgres")),
             "user": env_value("SYNC_POSTGRES_USER", os.getenv("DB_USER", "postgres")),
             "password": first_env_value("SYNC_POSTGRES_PASSWORD", "DB_PASSWORD"),
@@ -272,7 +274,7 @@ def postgres_command(config, extra_args=None):
     postgres_config = config["postgres"]
     extra_args = extra_args or []
 
-    if postgres_config.get("host"):
+    if postgres_config.get("use_direct_client"):
         return [
             "psql",
             "-h",
@@ -300,6 +302,23 @@ def postgres_command(config, extra_args=None):
     ]
 
 
+def select_postgres_mode(config):
+    postgres_config = config["postgres"]
+
+    if postgres_config.get("host") and shutil.which("psql") is not None:
+        postgres_config["use_direct_client"] = True
+        return "psql"
+
+    if postgres_config.get("docker_container") and shutil.which("docker") is not None:
+        postgres_config["use_direct_client"] = False
+        return "docker"
+
+    if postgres_config.get("host"):
+        raise RuntimeError("No se encontro psql en PATH para conectar a PostgreSQL por host.")
+
+    raise RuntimeError("No se encontro docker en PATH para usar docker exec con PostgreSQL.")
+
+
 def postgres_env(config):
     password = config.get("postgres", {}).get("password")
     if not password:
@@ -323,6 +342,14 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
     connect_timeout = config["ssh"].get("connect_timeout_seconds")
     if connect_timeout:
         ssh_args.extend(["-o", f"ConnectTimeout={int(connect_timeout)}"])
+
+    strict_host_key_checking = config["ssh"].get("strict_host_key_checking")
+    if strict_host_key_checking:
+        ssh_args.extend(["-o", f"StrictHostKeyChecking={strict_host_key_checking}"])
+
+    user_known_hosts_file = config["ssh"].get("user_known_hosts_file")
+    if user_known_hosts_file:
+        ssh_args.extend(["-o", f"UserKnownHostsFile={user_known_hosts_file}"])
 
     ssh_args.extend(
         [
@@ -585,10 +612,8 @@ def main():
         require_config(config)
 
         ssh_command = resolve_command("ssh.exe", "ssh")
-        if config.get("postgres", {}).get("host"):
-            resolve_command("psql")
-        else:
-            resolve_command("docker")
+        postgres_mode = select_postgres_mode(config)
+        logger.info("Modo PostgreSQL: %s", postgres_mode)
 
         folder_prefix = str(config["retention"]["folder_prefix"])
         date_format = python_date_format(str(config["retention"]["date_format"]))
