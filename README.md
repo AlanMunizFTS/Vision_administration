@@ -116,7 +116,7 @@ py -m app.IE_db
 
 Por defecto guarda:
 
-- Log unico: `app\sync.log`
+- Log unico: `reports\sync.log` cuando corre en Docker con el volumen `./reports:/app/reports`; fuera de Docker usa `app\sync.log` salvo que definas `SYNC_LOG_PATH`.
 - Dumps diarios: `app\Database_ddMMyy`
 - SQL temporal: `app\Database_ddMMyy\_temp`, eliminado al terminar
 

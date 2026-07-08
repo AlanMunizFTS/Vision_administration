@@ -40,6 +40,16 @@ def detect_encoding(input_path):
     return "utf-8"
 
 
+def tail_text_lines(path, encoding, max_lines=8):
+    try:
+        with open(path, "r", encoding=encoding, errors="replace") as file:
+            lines = file.readlines()
+    except OSError:
+        return []
+
+    return [line.rstrip("\n") for line in lines[-max_lines:]]
+
+
 def setup_logger(log_path):
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -615,7 +625,14 @@ CREATE TEMP TABLE tmp_model_results (
 
             if not finished_copy:
                 dst.write("ROLLBACK;\n")
-                raise RuntimeError("No se encontro el cierre del COPY: \\.")
+                file_size = input_path.stat().st_size if input_path.exists() else 0
+                tail_lines = tail_text_lines(input_path, encoding)
+                tail_preview = " | ".join(tail_lines) if tail_lines else "<sin lineas>"
+                raise RuntimeError(
+                    "No se encontro el cierre del COPY: \\. "
+                    f"El dump puede estar incompleto o truncado. Archivo={input_path}, "
+                    f"tamano={file_size} bytes, ultimas_lineas={tail_preview}"
+                )
 
             dst.write(
                 f"""
