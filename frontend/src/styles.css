@@ -992,6 +992,14 @@ button:focus-visible {
   color: #86efac;
 }
 
+.remote-sync-log-line.warning p {
+  color: #fde68a;
+}
+
+.remote-sync-log-line.error p {
+  color: #fca5a5;
+}
+
 .remote-sync-empty {
   color: #9ca3af;
 }

@@ -46,17 +46,6 @@ const EMPTY_SYNC_RUN = {
   summary: "Waiting to start"
 };
 
-const SIMULATED_SYNC_STEPS = [
-  { progress: 8, line: "Iniciando sync remoto.", summary: "Starting remote sync" },
-  { progress: 18, line: "Validando acceso de operador.", summary: "Checking access" },
-  { progress: 32, line: "Procesando estacion: Tesla 1.", summary: "Processing Tesla 1" },
-  { progress: 48, line: "Finalizado OK: Tesla 1.", summary: "Tesla 1 complete" },
-  { progress: 62, line: "Procesando estacion: Tesla 2.", summary: "Processing Tesla 2" },
-  { progress: 76, line: "Finalizado OK: Tesla 2.", summary: "Tesla 2 complete" },
-  { progress: 90, line: "Procesando estacion: Tesla 3.", summary: "Processing Tesla 3" },
-  { progress: 100, line: "Sync terminado.", summary: "Sync complete", status: "success" }
-];
-
 function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
   const merged = { ...filters, ...extra };
@@ -1763,80 +1752,168 @@ function syncDateTimeLabel(value) {
   });
 }
 
+function syncLogLevel(line) {
+  if (line.includes("[ERROR]")) return "error";
+  if (line.includes("[WARNING]")) return "warning";
+  if (line.includes("terminado") || line.includes("Finalizado OK") || line.includes("Importacion OK")) return "success";
+  return "info";
+}
+
+function syncLogTime(line) {
+  const match = line.match(/^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\]/);
+  return match ? match[2] : syncTimestamp();
+}
+
+function syncLogMessage(line) {
+  return line.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\[[A-Z]+\]\s*/, "");
+}
+
+function syncRunFromStatus(status) {
+  const logs = (status.log_tail || []).map((line, index) => ({
+    id: `${index}-${line}`,
+    time: syncLogTime(line),
+    level: syncLogLevel(line),
+    line: syncLogMessage(line)
+  }));
+  const running = Boolean(status.running);
+  const finished = Boolean(status.finished_at);
+  const succeeded = finished && status.return_code === 0;
+  const failed = finished && status.return_code !== 0;
+  const progress = running ? Math.min(95, Math.max(12, 20 + logs.length * 2)) : finished ? 100 : 0;
+  const summary = running
+    ? "Running IE_db sync"
+    : succeeded
+      ? "Sync complete"
+      : failed
+        ? `Sync failed (${status.return_code})`
+        : "Waiting to start";
+
+  return {
+    status: running ? "running" : succeeded ? "success" : failed ? "error" : "idle",
+    progress,
+    logs,
+    startedAt: status.started_at,
+    finishedAt: status.finished_at,
+    summary
+  };
+}
+
 function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose }) {
-  const timersRef = useRef([]);
+  const pollRef = useRef(null);
+  const lastHistoryKeyRef = useRef(null);
   const running = run.status === "running";
 
   useEffect(() => () => {
-    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    timersRef.current = [];
+    if (pollRef.current) window.clearInterval(pollRef.current);
   }, []);
 
-  function startSimulation(event) {
-    event.preventDefault();
+  useEffect(() => {
+    let cancelled = false;
 
-    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    timersRef.current = [];
+    fetchJson("/api/v1/sync-db")
+      .then((status) => {
+        if (cancelled) return;
+        onRunChange(syncRunFromStatus(status));
+        if (status.running) startPolling();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        onRunChange((current) => ({
+          ...current,
+          logs: [
+            ...current.logs,
+            { id: `${Date.now()}-load-error`, time: syncTimestamp(), level: "error", line: error.message }
+          ]
+        }));
+      });
 
-    const startedAt = new Date().toISOString();
-    const firstLog = {
-      id: `${Date.now()}-0`,
-      time: syncTimestamp(),
-      level: "info",
-      line: "Iniciando flujo de sincronizacion."
+    return () => {
+      cancelled = true;
     };
+  }, []);
+
+  async function refreshStatus() {
+    const status = await fetchJson("/api/v1/sync-db");
+    const nextRun = syncRunFromStatus(status);
+    onRunChange(nextRun);
+
+    if (!status.running && status.finished_at) {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+
+      const historyKey = `${status.started_at}-${status.finished_at}-${status.return_code}`;
+      if (lastHistoryKeyRef.current !== historyKey) {
+        lastHistoryKeyRef.current = historyKey;
+        onHistoryAdd({
+          id: historyKey,
+          status: status.return_code === 0 ? "success" : "error",
+          startedAt: status.started_at,
+          finishedAt: status.finished_at,
+          summary: status.return_code === 0 ? "IE_db sync completed" : `IE_db sync failed (${status.return_code})`,
+          logCount: nextRun.logs.length
+        });
+      }
+    }
+  }
+
+  function startPolling() {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(() => {
+      refreshStatus().catch((error) => {
+        if (pollRef.current) {
+          window.clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+        onRunChange((current) => ({
+          ...current,
+          status: "error",
+          progress: 100,
+          finishedAt: new Date().toISOString(),
+          summary: "Could not read sync status",
+          logs: [
+            ...current.logs,
+            { id: `${Date.now()}-status-error`, time: syncTimestamp(), level: "error", line: error.message }
+          ]
+        }));
+      });
+    }, 2000);
+  }
+
+  async function startSync(event) {
+    event.preventDefault();
 
     onRunChange({
       status: "running",
-      progress: 3,
-      logs: [firstLog],
-      startedAt,
+      progress: 5,
+      logs: [{ id: `${Date.now()}-start`, time: syncTimestamp(), level: "info", line: "Solicitando inicio de IE_db.py." }],
+      startedAt: new Date().toISOString(),
       finishedAt: null,
-      summary: "Preparing preview"
+      summary: "Starting IE_db sync"
     });
 
-    SIMULATED_SYNC_STEPS.forEach((step, index) => {
-      const timerId = window.setTimeout(() => {
-        const finishedAt = step.status === "success" ? new Date().toISOString() : null;
-        onRunChange((current) => {
-          const nextRun = {
-            ...current,
-            status: step.status || "running",
-            progress: step.progress,
-            summary: step.summary,
-            finishedAt,
-            logs: [
-              ...current.logs,
-              {
-                id: `${Date.now()}-${index + 1}`,
-                time: syncTimestamp(),
-                level: step.status === "success" ? "success" : "info",
-                line: step.line
-              }
-            ]
-          };
-
-          if (step.status === "success") {
-            onHistoryAdd({
-              id: `${Date.now()}-history`,
-              status: "success",
-              startedAt: nextRun.startedAt,
-              finishedAt,
-              summary: "Preview completed",
-              logCount: nextRun.logs.length
-            });
-          }
-
-          return nextRun;
-        });
-      }, 700 * (index + 1));
-      timersRef.current.push(timerId);
-    });
+    try {
+      const status = await apiRequest("/api/v1/sync-db", { method: "POST" });
+      onRunChange(syncRunFromStatus(status));
+      startPolling();
+    } catch (error) {
+      onRunChange({
+        status: "error",
+        progress: 100,
+        logs: [{ id: `${Date.now()}-start-error`, time: syncTimestamp(), level: "error", line: error.message }],
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+        summary: "Could not start sync"
+      });
+    }
   }
 
-  function resetPreview() {
-    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    timersRef.current = [];
+  function resetRun() {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
     onRunChange(EMPTY_SYNC_RUN);
   }
 
@@ -1850,7 +1927,7 @@ function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose })
           </button>
         </div>
 
-        <form className="remote-sync-form" onSubmit={startSimulation}>
+        <form className="remote-sync-form" onSubmit={startSync}>
           <button type="submit" className="button-primary" disabled={running}>
             <RefreshCw size={15} />
             {running ? "Running" : "Start Sync"}
@@ -1890,7 +1967,7 @@ function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose })
           <div className="remote-sync-section-head">
             <span>History</span>
             {run.status !== "idle" && !running ? (
-              <button type="button" className="small-button" onClick={resetPreview}>
+              <button type="button" className="small-button" onClick={resetRun}>
                 Reset
               </button>
             ) : null}
