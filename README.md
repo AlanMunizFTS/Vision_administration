@@ -111,7 +111,7 @@ SYNC_STATIONS=STATION_A|192.168.1.10|station_a_db.sql|true;STATION_B|192.168.1.1
 Cada estacion usa `name|ip|output_file|enabled`, y las estaciones se separan con `;`. No guardes IPs, usuarios o nombres reales en archivos versionados.
 
 ```powershell
-py app\IE_db.py
+py -m app.IE_db
 ```
 
 Por defecto guarda:
@@ -120,7 +120,9 @@ Por defecto guarda:
 - Dumps diarios: `app\Database_ddMMyy`
 - SQL temporal: `app\Database_ddMMyy\_temp`, eliminado al terminar
 
-El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /api/v1/sync-db` para consultar estado/log. Para conectar esto a un boton, el backend debe correr en una maquina con acceso a `ssh`, `docker` y al contenedor PostgreSQL central.
+El sync puede preparar una llave SSH local si no existe y saltar ese paso cuando la conexion ya funciona. Para instalar la llave automaticamente en las estaciones se requiere `SYNC_SSH_COPY_PASSWORD`; si no se define, el log indicara que la llave debe instalarse manualmente. `SYNC_SSH_AUTHORIZED_KEYS_MODE` acepta `windows_admin`, `windows_user` o `linux_user`.
+
+El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /api/v1/sync-db` para consultar estado/log. Para conectar esto a un boton, el backend debe correr con acceso a `ssh` y a PostgreSQL central. En Docker puede usar `psql` directo con `SYNC_POSTGRES_HOST`; fuera de Docker puede usar `docker exec` contra `SYNC_POSTGRES_DOCKER_CONTAINER`.
 
 ## Endpoints
 

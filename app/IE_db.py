@@ -106,6 +106,11 @@ def first_env_value(*names, default=None):
     return default
 
 
+def resolve_path(value, default):
+    raw_path = value or default
+    return Path(raw_path).expanduser()
+
+
 def parse_env_stations(raw_stations):
     stations = []
     for raw_station in raw_stations.split(";"):
@@ -155,6 +160,13 @@ def load_config_from_env():
             "connect_timeout_seconds": env_int("SYNC_SSH_CONNECT_TIMEOUT_SECONDS", 20),
             "strict_host_key_checking": env_value("SYNC_SSH_STRICT_HOST_KEY_CHECKING"),
             "user_known_hosts_file": env_value("SYNC_SSH_USER_KNOWN_HOSTS_FILE"),
+            "bootstrap_keys": env_bool("SYNC_SSH_BOOTSTRAP_KEYS", True),
+            "key_type": env_value("SYNC_SSH_KEY_TYPE", "ed25519"),
+            "key_comment": env_value("SYNC_SSH_KEY_COMMENT", "vision-sync"),
+            "key_path": resolve_path(env_value("SYNC_SSH_KEY_PATH"), "~/.ssh/id_ed25519"),
+            "public_key_path": resolve_path(env_value("SYNC_SSH_PUBLIC_KEY_PATH"), "~/.ssh/id_ed25519.pub"),
+            "copy_password": env_value("SYNC_SSH_COPY_PASSWORD"),
+            "authorized_keys_mode": env_value("SYNC_SSH_AUTHORIZED_KEYS_MODE", "windows_admin"),
             "remote_command": env_value("SYNC_SSH_REMOTE_COMMAND", required=True),
         },
         "postgres": {
@@ -231,21 +243,25 @@ def python_date_format(config_format):
     return result
 
 
-def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, env=None):
+def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, stdin_text=None, env=None):
     logger.info("Ejecutando: %s", step_name)
 
     stdin_handle = None
     stdout_handle = None
+    input_data = None
 
     try:
         if stdin_path:
             stdin_handle = open(stdin_path, "rb")
+        elif stdin_text is not None:
+            input_data = stdin_text.encode("utf-8")
         if stdout_path:
             stdout_handle = open(stdout_path, "wb")
 
         process = subprocess.run(
             args,
             stdin=stdin_handle,
+            input=input_data,
             stdout=stdout_handle or subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=False,
@@ -335,27 +351,31 @@ def postgres_env(config):
     return env
 
 
-def export_remote_database(station, config, today_dir, logger, ssh_command):
-    output_file = today_dir / station["output_file"]
-    if output_file.exists():
-        output_file.unlink()
-
+def build_ssh_args(config, batch_mode=None, include_identity=True):
+    ssh_config = config["ssh"]
     ssh_args = []
 
-    if config["ssh"].get("batch_mode") is True:
+    if batch_mode is None:
+        batch_mode = ssh_config.get("batch_mode") is True
+
+    if batch_mode is True:
         ssh_args.extend(["-o", "BatchMode=yes"])
 
-    connect_timeout = config["ssh"].get("connect_timeout_seconds")
+    connect_timeout = ssh_config.get("connect_timeout_seconds")
     if connect_timeout:
         ssh_args.extend(["-o", f"ConnectTimeout={int(connect_timeout)}"])
 
-    strict_host_key_checking = config["ssh"].get("strict_host_key_checking")
+    strict_host_key_checking = ssh_config.get("strict_host_key_checking")
     if strict_host_key_checking:
         ssh_args.extend(["-o", f"StrictHostKeyChecking={strict_host_key_checking}"])
 
-    user_known_hosts_file = config["ssh"].get("user_known_hosts_file")
+    user_known_hosts_file = ssh_config.get("user_known_hosts_file")
     if user_known_hosts_file:
         ssh_args.extend(["-o", f"UserKnownHostsFile={user_known_hosts_file}"])
+
+    key_path = ssh_config.get("key_path")
+    if include_identity and key_path and Path(key_path).exists():
+        ssh_args.extend(["-i", str(key_path), "-o", "IdentitiesOnly=yes"])
 
     ssh_args.extend(
         [
@@ -365,8 +385,155 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
             "ServerAliveCountMax=6",
         ]
     )
+    return ssh_args
 
-    ssh_target = f"{config['ssh']['user']}@{station['ip']}"
+
+def ssh_target_for_station(station, config):
+    return f"{config['ssh']['user']}@{station['ip']}"
+
+
+def ensure_local_ssh_key(config, logger):
+    ssh_config = config["ssh"]
+    key_path = Path(ssh_config["key_path"])
+    public_key_path = Path(ssh_config["public_key_path"])
+
+    if key_path.exists() and public_key_path.exists():
+        logger.info("Llave SSH local existente: %s", key_path)
+        return
+
+    resolve_command("ssh-keygen")
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Generando llave SSH local: %s", key_path)
+    run_process(
+        [
+            "ssh-keygen",
+            "-t",
+            str(ssh_config.get("key_type") or "ed25519"),
+            "-f",
+            str(key_path),
+            "-N",
+            "",
+            "-C",
+            str(ssh_config.get("key_comment") or "vision-sync"),
+        ],
+        logger,
+        "Generacion de llave SSH local",
+    )
+
+
+def station_ssh_available(station, config, ssh_command, logger):
+    ssh_target = ssh_target_for_station(station, config)
+    process = subprocess.run(
+        [ssh_command, *build_ssh_args(config, batch_mode=True), ssh_target, "echo ok"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if process.returncode == 0:
+        logger.info("Acceso SSH OK para %s", station["name"])
+        return True
+
+    stderr_text = (process.stderr or "").strip()
+    if stderr_text:
+        logger.warning("Acceso SSH pendiente para %s: %s", station["name"], stderr_text)
+    return False
+
+
+def sshpass_command(config, ssh_command):
+    password = config["ssh"].get("copy_password")
+    if not password:
+        return None, None
+
+    sshpass = shutil.which("sshpass")
+    if sshpass:
+        env = os.environ.copy()
+        env["SSHPASS"] = str(password)
+        return [sshpass, "-e", ssh_command], env
+
+    return None, None
+
+
+def remote_authorized_key_command(config):
+    mode = str(config["ssh"].get("authorized_keys_mode") or "windows_admin").lower()
+    if mode in {"linux", "linux_user", "jetson"}:
+        return (
+            "sh -lc 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; "
+            "key=$(cat); grep -qxF \"$key\" ~/.ssh/authorized_keys || printf \"%s\\n\" \"$key\" >> ~/.ssh/authorized_keys; "
+            "chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys'"
+        )
+
+    if mode in {"windows_user", "user"}:
+        return (
+            "powershell -NoProfile -Command "
+            "\"$key = ([Console]::In.ReadToEnd()).Trim(); "
+            "$dir = Join-Path $env:USERPROFILE '.ssh'; "
+            "$file = Join-Path $dir 'authorized_keys'; "
+            "New-Item -ItemType Directory -Path $dir -Force | Out-Null; "
+            "if (!(Test-Path $file) -or -not (Select-String -Path $file -SimpleMatch $key -Quiet)) { Add-Content -Path $file -Value $key }\""
+        )
+
+    return (
+        "powershell -NoProfile -Command "
+        "\"$key = ([Console]::In.ReadToEnd()).Trim(); "
+        "$file = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'; "
+        "New-Item -ItemType Directory -Path (Split-Path $file) -Force | Out-Null; "
+        "if (!(Test-Path $file) -or -not (Select-String -Path $file -SimpleMatch $key -Quiet)) { Add-Content -Path $file -Value $key }; "
+        "icacls $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F'\""
+    )
+
+
+def install_station_ssh_key(station, config, ssh_command, logger):
+    public_key_path = Path(config["ssh"]["public_key_path"])
+    public_key = public_key_path.read_text(encoding="utf-8").strip()
+    sshpass_args, sshpass_env = sshpass_command(config, ssh_command)
+    if not sshpass_args:
+        logger.warning(
+            "No se puede instalar la llave automaticamente para %s: falta SYNC_SSH_COPY_PASSWORD o sshpass.",
+            station["name"],
+        )
+        return False
+
+    ssh_target = ssh_target_for_station(station, config)
+    logger.info("Instalando llave SSH en %s", station["name"])
+    run_process(
+        [
+            *sshpass_args,
+            *build_ssh_args(config, batch_mode=False, include_identity=False),
+            ssh_target,
+            remote_authorized_key_command(config),
+        ],
+        logger,
+        f"Instalacion de llave SSH en {station['name']}",
+        stdin_text=f"{public_key}\n",
+        env=sshpass_env,
+    )
+    return True
+
+
+def ensure_station_ssh_access(station, config, ssh_command, logger):
+    if not config["ssh"].get("bootstrap_keys"):
+        return
+
+    ensure_local_ssh_key(config, logger)
+    if station_ssh_available(station, config, ssh_command, logger):
+        return
+
+    try:
+        if install_station_ssh_key(station, config, ssh_command, logger):
+            station_ssh_available(station, config, ssh_command, logger)
+    except Exception as exc:
+        logger.warning("No se pudo preparar llave SSH para %s: %s", station["name"], exc)
+
+
+def export_remote_database(station, config, today_dir, logger, ssh_command):
+    output_file = today_dir / station["output_file"]
+    if output_file.exists():
+        output_file.unlink()
+
+    ssh_args = build_ssh_args(config)
+
+    ssh_target = ssh_target_for_station(station, config)
     remote_command = str(config["ssh"]["remote_command"])
 
     logger.info("Exportando %s desde %s hacia %s", station["name"], ssh_target, output_file)
@@ -648,6 +815,7 @@ def main():
                 logger.info("------------------------------------------------------------")
                 logger.info("Procesando estacion: %s", station["name"])
 
+                ensure_station_ssh_access(station, config, ssh_command, logger)
                 sql_file = export_remote_database(station, config, today_dir, logger, ssh_command)
                 import_to_central_database(station, sql_file, config, temp_dir, logger)
 
