@@ -1715,9 +1715,35 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  function employeeNumberError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Employee number is required.";
+    if (trimmed.length > 10) return "Employee number must be 10 characters or fewer.";
+    return "";
+  }
+
+  function fullNameError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Full name is required.";
+    if (trimmed.length > 50) return "Full name must be 50 characters or fewer.";
+    return "";
+  }
+
+  function syncEmployeeNumberValidation(input) {
+    input.setCustomValidity(employeeNumberError(input.value));
+  }
+
+  function syncFullNameValidation(input) {
+    input.setCustomValidity(fullNameError(input.value));
+  }
+
   async function createEmployee(event) {
     event.preventDefault();
-    if (!employeeNumber.trim() || !fullName.trim()) return;
+    const employeeNumberInput = event.currentTarget.elements.employee_number;
+    const fullNameInput = event.currentTarget.elements.full_name;
+    syncEmployeeNumberValidation(employeeNumberInput);
+    syncFullNameValidation(fullNameInput);
+    if (!event.currentTarget.reportValidity()) return;
     setSaving(true);
     setError("");
     setMessage("");
@@ -1763,13 +1789,16 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
               Employee number
               <input
                 type="text"
+                name="employee_number"
                 value={employeeNumber}
                 maxLength={10}
                 onChange={(event) => {
                   setEmployeeNumber(event.target.value);
                   setError("");
                   setMessage("");
+                  syncEmployeeNumberValidation(event.target);
                 }}
+                onInvalid={(event) => syncEmployeeNumberValidation(event.target)}
                 required
               />
             </label>
@@ -1777,13 +1806,16 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
               Full name
               <input
                 type="text"
+                name="full_name"
                 value={fullName}
                 maxLength={50}
                 onChange={(event) => {
                   setFullName(event.target.value);
                   setError("");
                   setMessage("");
+                  syncFullNameValidation(event.target);
                 }}
+                onInvalid={(event) => syncFullNameValidation(event.target)}
                 required
               />
             </label>
