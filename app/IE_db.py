@@ -309,6 +309,12 @@ def select_postgres_mode(config):
         postgres_config["use_direct_client"] = True
         return "psql"
 
+    if postgres_config.get("docker_container") and shutil.which("psql") is not None:
+        postgres_config["host"] = postgres_config["docker_container"]
+        postgres_config["port"] = postgres_config.get("port") or 5432
+        postgres_config["use_direct_client"] = True
+        return "psql"
+
     if postgres_config.get("docker_container") and shutil.which("docker") is not None:
         postgres_config["use_direct_client"] = False
         return "docker"
