@@ -68,6 +68,22 @@ class ChangeLogTests(unittest.TestCase):
 
         self.assertEqual(db.calls, [])
 
+    def test_create_employee_rejects_long_number(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "employee_number must be at most 10 characters"):
+            change_log.create_employee(db, employee_number="12345678901", full_name="User Name")
+
+        self.assertEqual(db.calls, [])
+
+    def test_create_employee_rejects_long_name(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "full_name must be at most 50 characters"):
+            change_log.create_employee(db, employee_number="2102", full_name="A" * 51)
+
+        self.assertEqual(db.calls, [])
+
     def test_create_employee_rejects_duplicate_number(self):
         db = FakeChangeLogDb(fetch_one_rows=[None])
 
@@ -108,6 +124,22 @@ class ChangeLogTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "full_name cannot be empty"):
             change_log.update_employee(db, 7, full_name=" ")
+
+        self.assertEqual(db.calls, [])
+
+    def test_update_employee_rejects_long_number(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "employee_number must be at most 10 characters"):
+            change_log.update_employee(db, 7, employee_number="12345678901")
+
+        self.assertEqual(db.calls, [])
+
+    def test_update_employee_rejects_long_name(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "full_name must be at most 50 characters"):
+            change_log.update_employee(db, 7, full_name="A" * 51)
 
         self.assertEqual(db.calls, [])
 

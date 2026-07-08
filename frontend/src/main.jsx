@@ -1764,6 +1764,7 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
               <input
                 type="text"
                 value={employeeNumber}
+                maxLength={10}
                 onChange={(event) => {
                   setEmployeeNumber(event.target.value);
                   setError("");
@@ -1777,6 +1778,7 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
               <input
                 type="text"
                 value={fullName}
+                maxLength={50}
                 onChange={(event) => {
                   setFullName(event.target.value);
                   setError("");

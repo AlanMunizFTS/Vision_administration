@@ -22,6 +22,8 @@ ALTER TABLE change_log_entries ADD COLUMN IF NOT EXISTS change_time TIME;
 VALID_SIDES = {"left", "right", "both"}
 VALID_CATEGORIES = {"Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"}
 DESCRIPTION_MIN_LENGTH = 20
+EMPLOYEE_NUMBER_MAX_LENGTH = 10
+EMPLOYEE_NAME_MAX_LENGTH = 50
 
 
 def ensure_schema(db):
@@ -49,8 +51,12 @@ def create_employee(db, employee_number, full_name):
     full_name = str(full_name or "").strip()
     if not employee_number:
         raise ValueError("employee_number is required")
+    if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
+        raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
     if not full_name:
         raise ValueError("full_name is required")
+    if len(full_name) > EMPLOYEE_NAME_MAX_LENGTH:
+        raise ValueError(f"full_name must be at most {EMPLOYEE_NAME_MAX_LENGTH} characters")
 
     row = db.fetch_one(
         """
@@ -73,6 +79,8 @@ def update_employee(db, employee_id, employee_number=None, full_name=None):
         employee_number = str(employee_number or "").strip()
         if not employee_number:
             raise ValueError("employee_number cannot be empty")
+        if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
+            raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
         existing = db.fetch_one(
             "SELECT id FROM employees WHERE employee_number = %s AND id <> %s",
             [employee_number, employee_id],
@@ -85,6 +93,8 @@ def update_employee(db, employee_id, employee_number=None, full_name=None):
         full_name = str(full_name or "").strip()
         if not full_name:
             raise ValueError("full_name cannot be empty")
+        if len(full_name) > EMPLOYEE_NAME_MAX_LENGTH:
+            raise ValueError(f"full_name must be at most {EMPLOYEE_NAME_MAX_LENGTH} characters")
         fields.append("full_name = %s")
         params.append(full_name)
     if not fields:
