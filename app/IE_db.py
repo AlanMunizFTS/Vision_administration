@@ -98,6 +98,14 @@ def env_int(name, default):
         raise ValueError(f"{name} debe ser un numero entero.") from exc
 
 
+def first_env_value(*names, default=None):
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip():
+            return value.strip()
+    return default
+
+
 def parse_env_stations(raw_stations):
     stations = []
     for raw_station in raw_stations.split(";"):
@@ -149,8 +157,11 @@ def load_config_from_env():
         },
         "postgres": {
             "docker_container": env_value("SYNC_POSTGRES_DOCKER_CONTAINER", "postgres-fts"),
+            "host": first_env_value("SYNC_POSTGRES_HOST", "API_DB_HOST", "DB_HOST"),
+            "port": int(first_env_value("SYNC_POSTGRES_PORT", "API_DB_PORT", "DB_PORT", default="5432")),
             "database": env_value("SYNC_POSTGRES_DATABASE", os.getenv("DB_NAME", "postgres")),
             "user": env_value("SYNC_POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+            "password": first_env_value("SYNC_POSTGRES_PASSWORD", "DB_PASSWORD"),
             "target_table": env_value("SYNC_POSTGRES_TARGET_TABLE", "model_results_central"),
             "source_station_column": env_value("SYNC_POSTGRES_SOURCE_STATION_COLUMN", "source_station"),
         },
@@ -168,7 +179,6 @@ def require_config(config):
     required_paths = [
         ("ssh", "user"),
         ("ssh", "remote_command"),
-        ("postgres", "docker_container"),
         ("postgres", "database"),
         ("postgres", "user"),
         ("retention", "folder_prefix"),
@@ -178,6 +188,10 @@ def require_config(config):
     for section, key in required_paths:
         if not config.get(section, {}).get(key):
             raise ValueError(f"Falta {section}.{key} en la configuracion de sincronizacion.")
+
+    postgres_config = config.get("postgres", {})
+    if not postgres_config.get("host") and not postgres_config.get("docker_container"):
+        raise ValueError("Falta postgres.host o postgres.docker_container en la configuracion.")
 
     stations = config.get("stations") or []
     if not stations:
@@ -215,7 +229,7 @@ def python_date_format(config_format):
     return result
 
 
-def run_process(args, logger, step_name, stdin_path=None, stdout_path=None):
+def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, env=None):
     logger.info("Ejecutando: %s", step_name)
 
     stdin_handle = None
@@ -234,6 +248,7 @@ def run_process(args, logger, step_name, stdin_path=None, stdout_path=None):
             stderr=subprocess.PIPE,
             text=False,
             check=False,
+            env=env,
         )
     finally:
         if stdin_handle:
@@ -251,6 +266,48 @@ def run_process(args, logger, step_name, stdin_path=None, stdout_path=None):
 
     if process.returncode != 0:
         raise RuntimeError(f"{step_name} fallo con ExitCode={process.returncode}")
+
+
+def postgres_command(config, extra_args=None):
+    postgres_config = config["postgres"]
+    extra_args = extra_args or []
+
+    if postgres_config.get("host"):
+        return [
+            "psql",
+            "-h",
+            str(postgres_config["host"]),
+            "-p",
+            str(postgres_config.get("port") or 5432),
+            "-U",
+            str(postgres_config["user"]),
+            "-d",
+            str(postgres_config["database"]),
+            *extra_args,
+        ]
+
+    return [
+        "docker",
+        "exec",
+        "-i",
+        str(postgres_config["docker_container"]),
+        "psql",
+        "-U",
+        str(postgres_config["user"]),
+        "-d",
+        str(postgres_config["database"]),
+        *extra_args,
+    ]
+
+
+def postgres_env(config):
+    password = config.get("postgres", {}).get("password")
+    if not password:
+        return None
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = str(password)
+    return env
 
 
 def export_remote_database(station, config, today_dir, logger, ssh_command):
@@ -405,22 +462,11 @@ def import_to_central_database(station, input_file, config, temp_dir, logger):
 
     logger.info("Importando %s hacia PostgreSQL central", station["name"])
     run_process(
-        [
-            "docker",
-            "exec",
-            "-i",
-            str(config["postgres"]["docker_container"]),
-            "psql",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            str(config["postgres"]["user"]),
-            "-d",
-            str(config["postgres"]["database"]),
-        ],
+        postgres_command(config, ["-v", "ON_ERROR_STOP=1"]),
         logger,
         f"Importacion PostgreSQL de {station['name']}",
         stdin_path=transform_sql,
+        env=postgres_env(config),
     )
 
     logger.info("Importacion OK de %s", station["name"])
@@ -437,44 +483,28 @@ def show_central_counts(config, logger):
 
     logger.info("Conteo total en %s", target_table)
     run_process(
-        [
-            "docker",
-            "exec",
-            "-i",
-            str(config["postgres"]["docker_container"]),
-            "psql",
-            "-U",
-            str(config["postgres"]["user"]),
-            "-d",
-            str(config["postgres"]["database"]),
-            "-c",
-            f"SELECT COUNT(*) AS total_central FROM {target_table};",
-        ],
+        postgres_command(config, ["-c", f"SELECT COUNT(*) AS total_central FROM {target_table};"]),
         logger,
         "Conteo total",
+        env=postgres_env(config),
     )
 
     if source_column:
         logger.info("Conteo por %s en %s", source_column, target_table)
         run_process(
-            [
-                "docker",
-                "exec",
-                "-i",
-                str(config["postgres"]["docker_container"]),
-                "psql",
-                "-U",
-                str(config["postgres"]["user"]),
-                "-d",
-                str(config["postgres"]["database"]),
-                "-c",
-                (
-                    f"SELECT {source_column}, COUNT(*) AS total "
-                    f"FROM {target_table} GROUP BY {source_column} ORDER BY {source_column};"
-                ),
-            ],
+            postgres_command(
+                config,
+                [
+                    "-c",
+                    (
+                        f"SELECT {source_column}, COUNT(*) AS total "
+                        f"FROM {target_table} GROUP BY {source_column} ORDER BY {source_column};"
+                    ),
+                ],
+            ),
             logger,
             "Conteo por estacion",
+            env=postgres_env(config),
         )
 
 
@@ -555,7 +585,10 @@ def main():
         require_config(config)
 
         ssh_command = resolve_command("ssh.exe", "ssh")
-        resolve_command("docker")
+        if config.get("postgres", {}).get("host"):
+            resolve_command("psql")
+        else:
+            resolve_command("docker")
 
         folder_prefix = str(config["retention"]["folder_prefix"])
         date_format = python_date_format(str(config["retention"]["date_format"]))

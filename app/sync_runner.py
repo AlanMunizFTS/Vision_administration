@@ -47,7 +47,8 @@ class SyncRunner:
             self._process = subprocess.Popen(
                 [
                     sys.executable,
-                    str(SYNC_SCRIPT),
+                    "-m",
+                    "app.IE_db",
                     "--config",
                     str(sync_config),
                     "--work-dir",
