@@ -518,6 +518,7 @@ class ChangeLogEntryCreate(BaseModel):
     side: str = "both"
     change_date: date
     change_time: time | None = None
+    employee_id: int
     category: str = "Other"
     label: str | None = None
     description: str | None = None
@@ -528,9 +529,59 @@ class ChangeLogEntryUpdate(BaseModel):
     side: str | None = None
     change_date: date | None = None
     change_time: time | None = None
+    employee_id: int | None = None
     category: str | None = None
     label: str | None = None
     description: str | None = None
+
+
+class EmployeeCreate(BaseModel):
+    employee_number: str
+    full_name: str
+
+
+class EmployeeUpdate(BaseModel):
+    employee_number: str | None = None
+    full_name: str | None = None
+
+
+@app.get("/api/v1/employees")
+def employee_list(db=Depends(db_dependency)):
+    return {"items": change_log.get_employees(db)}
+
+
+@app.post("/api/v1/employees")
+def employee_create(payload: EmployeeCreate, db=Depends(db_dependency)):
+    try:
+        return change_log.create_employee(
+            db,
+            employee_number=payload.employee_number,
+            full_name=payload.full_name,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/employees/{employee_id}")
+def employee_update(employee_id: int, payload: EmployeeUpdate, db=Depends(db_dependency)):
+    try:
+        return change_log.update_employee(
+            db,
+            employee_id,
+            employee_number=payload.employee_number,
+            full_name=payload.full_name,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/employees/{employee_id}")
+def employee_delete(employee_id: int, db=Depends(db_dependency)):
+    try:
+        change_log.delete_employee(db, employee_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
 
 
 @app.get("/api/v1/change-log")
@@ -546,6 +597,7 @@ def change_log_create(payload: ChangeLogEntryCreate, db=Depends(db_dependency)):
             station_pair=payload.station_pair,
             change_date=payload.change_date,
             change_time=payload.change_time,
+            employee_id=payload.employee_id,
             category=payload.category,
             label=payload.label,
             side=payload.side,
@@ -565,6 +617,7 @@ def change_log_update(entry_id: int, payload: ChangeLogEntryUpdate, db=Depends(d
             station_pair=payload.station_pair,
             change_date=payload.change_date,
             change_time=fields.get("change_time", change_log.UNSET),
+            employee_id=fields.get("employee_id", change_log.UNSET),
             category=payload.category,
             label=payload.label,
             side=payload.side,

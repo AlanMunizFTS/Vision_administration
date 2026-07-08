@@ -22,6 +22,8 @@ ALTER TABLE change_log_entries ADD COLUMN IF NOT EXISTS change_time TIME;
 VALID_SIDES = {"left", "right", "both"}
 VALID_CATEGORIES = {"Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"}
 DESCRIPTION_MIN_LENGTH = 20
+EMPLOYEE_NUMBER_MAX_LENGTH = 10
+EMPLOYEE_NAME_MAX_LENGTH = 50
 
 
 def ensure_schema(db):
@@ -39,8 +41,98 @@ def normalize_row(row):
     return {key: normalize_value(value) for key, value in dict(row).items()}
 
 
+def get_employees(db):
+    rows = db.fetch("SELECT * FROM employees ORDER BY full_name ASC, employee_number ASC")
+    return [normalize_row(row) for row in rows]
+
+
+def create_employee(db, employee_number, full_name):
+    employee_number = str(employee_number or "").strip()
+    full_name = str(full_name or "").strip()
+    if not employee_number:
+        raise ValueError("employee_number is required")
+    if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
+        raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
+    if not full_name:
+        raise ValueError("full_name is required")
+    if len(full_name) > EMPLOYEE_NAME_MAX_LENGTH:
+        raise ValueError(f"full_name must be at most {EMPLOYEE_NAME_MAX_LENGTH} characters")
+
+    row = db.fetch_one(
+        """
+        INSERT INTO employees (employee_number, full_name)
+        VALUES (%s, %s)
+        ON CONFLICT (employee_number) DO NOTHING
+        RETURNING *
+        """,
+        [employee_number, full_name],
+    )
+    if not row:
+        raise ValueError("employee_number already exists")
+    return normalize_row(row)
+
+
+def update_employee(db, employee_id, employee_number=None, full_name=None):
+    fields = []
+    params = []
+    if employee_number is not None:
+        employee_number = str(employee_number or "").strip()
+        if not employee_number:
+            raise ValueError("employee_number cannot be empty")
+        if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
+            raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
+        existing = db.fetch_one(
+            "SELECT id FROM employees WHERE employee_number = %s AND id <> %s",
+            [employee_number, employee_id],
+        )
+        if existing:
+            raise ValueError("employee_number already exists")
+        fields.append("employee_number = %s")
+        params.append(employee_number)
+    if full_name is not None:
+        full_name = str(full_name or "").strip()
+        if not full_name:
+            raise ValueError("full_name cannot be empty")
+        if len(full_name) > EMPLOYEE_NAME_MAX_LENGTH:
+            raise ValueError(f"full_name must be at most {EMPLOYEE_NAME_MAX_LENGTH} characters")
+        fields.append("full_name = %s")
+        params.append(full_name)
+    if not fields:
+        raise ValueError("nothing to update")
+
+    params.append(employee_id)
+    row = db.fetch_one(
+        f"""
+        UPDATE employees
+        SET {', '.join(fields)}
+        WHERE id = %s
+        RETURNING *
+        """,
+        params,
+    )
+    if not row:
+        raise ValueError("employee not found")
+    return normalize_row(row)
+
+
+def delete_employee(db, employee_id):
+    row = db.fetch_one("DELETE FROM employees WHERE id = %s RETURNING id", [employee_id])
+    if not row:
+        raise ValueError("employee not found")
+
+
 def get_entries(db):
-    rows = db.fetch("SELECT * FROM change_log_entries ORDER BY change_date DESC, created_at DESC")
+    rows = db.fetch(
+        """
+        SELECT
+            change_log_entries.*,
+            employees.employee_number,
+            employees.full_name AS employee_name
+        FROM change_log_entries
+        LEFT JOIN employees ON employees.id = change_log_entries.employee_id
+        ORDER BY change_log_entries.change_date DESC, change_log_entries.created_at DESC
+        """
+    )
     return [normalize_row(row) for row in rows]
 
 
@@ -69,7 +161,22 @@ def _resolve_description(description, required=False):
     return cleaned
 
 
-def create_entry(db, station_pair, change_date, category="Other", label=None, side="both", description=None, change_time=None):
+def _resolve_employee_id(db, employee_id, required=False):
+    if employee_id is None:
+        if required:
+            raise ValueError("employee_id is required")
+        return None
+    try:
+        resolved_id = int(employee_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("employee_id must be an integer") from exc
+    employee = db.fetch_one("SELECT id FROM employees WHERE id = %s", [resolved_id])
+    if not employee:
+        raise ValueError("employee not found")
+    return resolved_id
+
+
+def create_entry(db, station_pair, change_date, category="Other", label=None, side="both", description=None, change_time=None, employee_id=None):
     station_pair = str(station_pair or "").strip()
     if not station_pair:
         raise ValueError("station_pair is required")
@@ -78,14 +185,15 @@ def create_entry(db, station_pair, change_date, category="Other", label=None, si
     if side not in VALID_SIDES:
         raise ValueError(f"side must be one of {sorted(VALID_SIDES)}")
     description = _resolve_description(description, required=True)
+    employee_id = _resolve_employee_id(db, employee_id, required=True)
 
     row = db.fetch_one(
         """
-        INSERT INTO change_log_entries (station_pair, side, change_date, change_time, category, label, description)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO change_log_entries (station_pair, side, change_date, change_time, employee_id, category, label, description)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
-        [station_pair, side, change_date, change_time, category, label, description],
+        [station_pair, side, change_date, change_time, employee_id, category, label, description],
     )
     return normalize_row(row)
 
@@ -93,7 +201,7 @@ def create_entry(db, station_pair, change_date, category="Other", label=None, si
 UNSET = object()
 
 
-def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=UNSET, category=None, label=None, side=None, description=UNSET):
+def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=UNSET, category=None, label=None, side=None, description=UNSET, employee_id=UNSET):
     fields = []
     params = []
     if station_pair is not None:
@@ -108,6 +216,9 @@ def update_entry(db, entry_id, station_pair=None, change_date=None, change_time=
     if change_time is not UNSET:
         fields.append("change_time = %s")
         params.append(change_time)
+    if employee_id is not UNSET:
+        fields.append("employee_id = %s")
+        params.append(_resolve_employee_id(db, employee_id, required=False))
     if category is not None or label is not None:
         existing = db.fetch_one("SELECT category, label FROM change_log_entries WHERE id = %s", [entry_id])
         if not existing:
