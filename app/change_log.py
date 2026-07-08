@@ -66,6 +66,51 @@ def create_employee(db, employee_number, full_name):
     return normalize_row(row)
 
 
+def update_employee(db, employee_id, employee_number=None, full_name=None):
+    fields = []
+    params = []
+    if employee_number is not None:
+        employee_number = str(employee_number or "").strip()
+        if not employee_number:
+            raise ValueError("employee_number cannot be empty")
+        existing = db.fetch_one(
+            "SELECT id FROM employees WHERE employee_number = %s AND id <> %s",
+            [employee_number, employee_id],
+        )
+        if existing:
+            raise ValueError("employee_number already exists")
+        fields.append("employee_number = %s")
+        params.append(employee_number)
+    if full_name is not None:
+        full_name = str(full_name or "").strip()
+        if not full_name:
+            raise ValueError("full_name cannot be empty")
+        fields.append("full_name = %s")
+        params.append(full_name)
+    if not fields:
+        raise ValueError("nothing to update")
+
+    params.append(employee_id)
+    row = db.fetch_one(
+        f"""
+        UPDATE employees
+        SET {', '.join(fields)}
+        WHERE id = %s
+        RETURNING *
+        """,
+        params,
+    )
+    if not row:
+        raise ValueError("employee not found")
+    return normalize_row(row)
+
+
+def delete_employee(db, employee_id):
+    row = db.fetch_one("DELETE FROM employees WHERE id = %s RETURNING id", [employee_id])
+    if not row:
+        raise ValueError("employee not found")
+
+
 def get_entries(db):
     rows = db.fetch(
         """

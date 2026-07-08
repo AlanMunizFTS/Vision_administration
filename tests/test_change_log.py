@@ -76,6 +76,65 @@ class ChangeLogTests(unittest.TestCase):
 
         self.assertEqual(len(db.calls), 1)
 
+    def test_update_employee_trims_values(self):
+        db = FakeChangeLogDb(fetch_one_rows=[None, {
+            "id": 7,
+            "employee_number": "2103",
+            "full_name": "Updated Name",
+        }])
+
+        row = change_log.update_employee(
+            db,
+            7,
+            employee_number=" 2103 ",
+            full_name=" Updated Name ",
+        )
+
+        self.assertEqual(row["employee_number"], "2103")
+        self.assertEqual(row["full_name"], "Updated Name")
+        _, params = db.calls[1]
+        self.assertEqual(params, ["2103", "Updated Name", 7])
+
+    def test_update_employee_rejects_duplicate_number(self):
+        db = FakeChangeLogDb(fetch_one_rows=[{"id": 8}])
+
+        with self.assertRaisesRegex(ValueError, "employee_number already exists"):
+            change_log.update_employee(db, 7, employee_number="2102")
+
+        self.assertEqual(len(db.calls), 1)
+
+    def test_update_employee_rejects_blank_name(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "full_name cannot be empty"):
+            change_log.update_employee(db, 7, full_name=" ")
+
+        self.assertEqual(db.calls, [])
+
+    def test_update_employee_requires_changes(self):
+        db = FakeChangeLogDb()
+
+        with self.assertRaisesRegex(ValueError, "nothing to update"):
+            change_log.update_employee(db, 7)
+
+        self.assertEqual(db.calls, [])
+
+    def test_delete_employee_deletes_by_id(self):
+        db = FakeChangeLogDb(fetch_one_rows=[{"id": 7}])
+
+        change_log.delete_employee(db, 7)
+
+        _, params = db.calls[0]
+        self.assertEqual(params, [7])
+
+    def test_delete_employee_rejects_missing_employee(self):
+        db = FakeChangeLogDb(fetch_one_rows=[None])
+
+        with self.assertRaisesRegex(ValueError, "employee not found"):
+            change_log.delete_employee(db, 7)
+
+        self.assertEqual(len(db.calls), 1)
+
     def test_create_entry_requires_description(self):
         db = FakeChangeLogDb()
 

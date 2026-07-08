@@ -854,6 +854,12 @@ button:focus-visible {
   font-weight: 650;
 }
 
+.employee-table-actions {
+  width: 92px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .change-log-table {
   width: 100%;
   min-width: 980px;

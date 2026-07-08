@@ -540,6 +540,11 @@ class EmployeeCreate(BaseModel):
     full_name: str
 
 
+class EmployeeUpdate(BaseModel):
+    employee_number: str | None = None
+    full_name: str | None = None
+
+
 @app.get("/api/v1/employees")
 def employee_list(db=Depends(db_dependency)):
     return {"items": change_log.get_employees(db)}
@@ -553,6 +558,28 @@ def employee_create(payload: EmployeeCreate, db=Depends(db_dependency)):
             employee_number=payload.employee_number,
             full_name=payload.full_name,
         )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/employees/{employee_id}")
+def employee_update(employee_id: int, payload: EmployeeUpdate, db=Depends(db_dependency)):
+    try:
+        return change_log.update_employee(
+            db,
+            employee_id,
+            employee_number=payload.employee_number,
+            full_name=payload.full_name,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/employees/{employee_id}")
+def employee_delete(employee_id: int, db=Depends(db_dependency)):
+    try:
+        change_log.delete_employee(db, employee_id)
+        return {"deleted": True}
     except ValueError as exc:
         handle_report_error(exc)
 

@@ -149,6 +149,8 @@ El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /
 - `DELETE /api/v1/glidepath/milestones/{milestone_id}`
 - `GET /api/v1/employees`
 - `POST /api/v1/employees`
+- `PATCH /api/v1/employees/{employee_id}`
+- `DELETE /api/v1/employees/{employee_id}`
 - `GET /api/v1/change-log`
 - `POST /api/v1/change-log`
 - `PATCH /api/v1/change-log/{entry_id}`

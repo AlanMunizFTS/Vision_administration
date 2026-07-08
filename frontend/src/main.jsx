@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -1707,9 +1707,10 @@ function ChangeLogManager({ pairOptions, optionsLoading, employees, employeesLoa
   );
 }
 
-function AddEmployeeModal({ onClose, onRefresh }) {
-  const [employeeNumber, setEmployeeNumber] = useState("");
-  const [fullName, setFullName] = useState("");
+function AddEmployeeModal({ employee, onClose, onRefresh }) {
+  const isEditing = Boolean(employee);
+  const [employeeNumber, setEmployeeNumber] = useState(employee?.employee_number || "");
+  const [fullName, setFullName] = useState(employee?.full_name || "");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -1721,17 +1722,21 @@ function AddEmployeeModal({ onClose, onRefresh }) {
     setError("");
     setMessage("");
     try {
-      await apiRequest("/api/v1/employees", {
-        method: "POST",
+      await apiRequest(isEditing ? `/api/v1/employees/${employee.id}` : "/api/v1/employees", {
+        method: isEditing ? "PATCH" : "POST",
         body: JSON.stringify({
           employee_number: employeeNumber.trim(),
           full_name: fullName.trim()
         })
       });
-      setEmployeeNumber("");
-      setFullName("");
       onRefresh();
-      setMessage("Employee added.");
+      if (isEditing) {
+        onClose();
+      } else {
+        setEmployeeNumber("");
+        setFullName("");
+        setMessage("Employee added.");
+      }
     } catch (exc) {
       setError(exc.message);
     } finally {
@@ -1743,7 +1748,7 @@ function AddEmployeeModal({ onClose, onRefresh }) {
     <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="glidepath-modal">
         <div className="multi-select-modal-head">
-          <span>Add Employee</span>
+          <span>{isEditing ? "Edit Employee" : "Add Employee"}</span>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
@@ -1782,7 +1787,8 @@ function AddEmployeeModal({ onClose, onRefresh }) {
             </label>
           </div>
           <button type="submit" className="button-primary" disabled={saving}>
-            <UserPlus size={15} /> Add Employee
+            {isEditing ? <Pencil size={15} /> : <UserPlus size={15} />}
+            {isEditing ? "Save Employee" : "Add Employee"}
           </button>
         </form>
       </div>
@@ -1790,12 +1796,29 @@ function AddEmployeeModal({ onClose, onRefresh }) {
   );
 }
 
-function EmployeeScreen({ employees, loading, onOpenCreate }) {
+function EmployeeScreen({ employees, loading, onOpenCreate, onOpenEdit, onRefresh }) {
+  const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState(null);
   const sortedEmployees = [...employees].sort((a, b) => {
     const nameCompare = String(a.full_name || "").localeCompare(String(b.full_name || ""));
     if (nameCompare !== 0) return nameCompare;
     return String(a.employee_number || "").localeCompare(String(b.employee_number || ""));
   });
+
+  async function deleteEmployee(employee) {
+    const confirmed = window.confirm(`Delete employee ${employeeDisplay(employee)}? Logs will remain as Unassigned.`);
+    if (!confirmed) return;
+    setDeletingId(employee.id);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/employees/${employee.id}`, { method: "DELETE" });
+      onRefresh();
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <>
@@ -1813,6 +1836,7 @@ function EmployeeScreen({ employees, loading, onOpenCreate }) {
       </header>
 
       {loading ? <div className="loading">Loading employees...</div> : null}
+      {error ? <div className="error">{error}</div> : null}
 
       <section className="employee-screen">
         <table className="employee-table">
@@ -1820,6 +1844,7 @@ function EmployeeScreen({ employees, loading, onOpenCreate }) {
             <tr>
               <th>Employee number</th>
               <th>Full name</th>
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -1827,10 +1852,18 @@ function EmployeeScreen({ employees, loading, onOpenCreate }) {
               <tr className="employee-table-row" key={employee.id}>
                 <td className="employee-table-number">{employee.employee_number}</td>
                 <td className="employee-table-name">{employee.full_name}</td>
+                <td className="employee-table-actions">
+                  <button type="button" className="icon-button" onClick={() => onOpenEdit(employee)} aria-label="Edit employee">
+                    <Pencil size={14} />
+                  </button>
+                  <button type="button" className="icon-button" onClick={() => deleteEmployee(employee)} disabled={deletingId === employee.id} aria-label="Delete employee">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
               </tr>
             )) : (
               <tr>
-                <td className="empty-option" colSpan="2">No employees yet. Add one from this screen.</td>
+                <td className="empty-option" colSpan="3">No employees yet. Add one from this screen.</td>
               </tr>
             )}
           </tbody>
@@ -1942,6 +1975,7 @@ function App() {
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [showEmployeeManager, setShowEmployeeManager] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
 
   useEffect(() => {
     setOptionsLoading(true);
@@ -1960,18 +1994,20 @@ function App() {
   };
 
   const reloadChangeLog = () => {
-    fetchJson("/api/v1/change-log")
+    return fetchJson("/api/v1/change-log")
       .then((payload) => setChangeLogEntries(payload.items || []))
       .catch(() => {});
   };
 
   const reloadEmployees = () => {
     setEmployeesLoading(true);
-    fetchJson("/api/v1/employees")
+    return fetchJson("/api/v1/employees")
       .then((payload) => setEmployees(payload.items || []))
       .catch(() => {})
       .finally(() => setEmployeesLoading(false));
   };
+
+  const reloadEmployeesAndChangeLog = () => Promise.all([reloadEmployees(), reloadChangeLog()]);
 
   useEffect(() => {
     reloadProjects();
@@ -2073,6 +2109,11 @@ function App() {
     applyFilters({ ...filters, station_pairs: [] });
   }
 
+  function closeEmployeeManager() {
+    setShowEmployeeManager(false);
+    setEditingEmployee(null);
+  }
+
   const showByHead = viewLevel.type === "head";
   const showAllMachines = viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL;
   const showOverall = viewLevel.type === "overall";
@@ -2149,15 +2190,28 @@ function App() {
       ) : null}
       {showEmployeeManager ? (
         <AddEmployeeModal
-          onClose={() => setShowEmployeeManager(false)}
-          onRefresh={reloadEmployees}
+          employee={editingEmployee}
+          onClose={closeEmployeeManager}
+          onRefresh={reloadEmployeesAndChangeLog}
         />
       ) : null}
       <main>
         {activeScreen === "changes" ? (
           <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
         ) : activeScreen === "employees" ? (
-          <EmployeeScreen employees={employees} loading={employeesLoading} onOpenCreate={() => setShowEmployeeManager(true)} />
+          <EmployeeScreen
+            employees={employees}
+            loading={employeesLoading}
+            onOpenCreate={() => {
+              setEditingEmployee(null);
+              setShowEmployeeManager(true);
+            }}
+            onOpenEdit={(employee) => {
+              setEditingEmployee(employee);
+              setShowEmployeeManager(true);
+            }}
+            onRefresh={reloadEmployeesAndChangeLog}
+          />
         ) : (
           <>
         <header className="topbar">
