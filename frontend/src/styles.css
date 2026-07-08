@@ -864,6 +864,176 @@ button:focus-visible {
   text-align: right;
 }
 
+/* ---------- Remote sync ---------- */
+
+.remote-sync-modal {
+  width: min(780px, 100%);
+}
+
+.remote-sync-form {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.remote-sync-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.remote-sync-status.success {
+  border-color: #bbf7d0;
+  background: var(--good-soft);
+}
+
+.remote-sync-status-head,
+.remote-sync-section-head,
+.remote-sync-meta,
+.remote-sync-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.remote-sync-status-head span,
+.remote-sync-section-head span {
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--text);
+}
+
+.remote-sync-status-head strong {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.remote-sync-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.remote-sync-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.remote-sync-status.success .remote-sync-progress span {
+  background: var(--good);
+}
+
+.remote-sync-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.remote-sync-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remote-sync-section-head {
+  min-height: 30px;
+}
+
+.remote-sync-console {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 176px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: #111827;
+  color: #d1d5db;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+}
+
+.remote-sync-log-line {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.remote-sync-log-line span {
+  color: #9ca3af;
+}
+
+.remote-sync-log-line p {
+  color: #e5e7eb;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remote-sync-log-line.success p {
+  color: #86efac;
+}
+
+.remote-sync-empty {
+  color: #9ca3af;
+}
+
+.remote-sync-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-sync-history-item {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.remote-sync-history-item strong {
+  color: var(--text);
+}
+
+.remote-sync-history-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.remote-sync-history-status.success {
+  background: var(--good-soft);
+  color: var(--good-soft-text);
+}
+
 /* ---------- Status banners ---------- */
 
 .error,
@@ -1363,6 +1533,10 @@ tbody tr:nth-child(even):hover {
     flex-direction: column;
   }
 
+  .actions {
+    flex-wrap: wrap;
+  }
+
   .kpi-row,
   .filters,
   .filters.compact,
@@ -1374,5 +1548,14 @@ tbody tr:nth-child(even):hover {
 @media (max-width: 640px) {
   .kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .remote-sync-form button {
+    width: 100%;
+  }
+
+  .remote-sync-log-line {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }

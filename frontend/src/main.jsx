@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -36,6 +36,26 @@ const STATION_DISPLAY_NAMES = {
   ART_ENDFORM_1861: "Tesla 2",
   ART_ENDFORM_1862: "Tesla 3"
 };
+
+const EMPTY_SYNC_RUN = {
+  status: "idle",
+  progress: 0,
+  logs: [],
+  startedAt: null,
+  finishedAt: null,
+  summary: "Waiting to start"
+};
+
+const SIMULATED_SYNC_STEPS = [
+  { progress: 8, line: "Iniciando sync remoto.", summary: "Starting remote sync" },
+  { progress: 18, line: "Validando acceso de operador.", summary: "Checking access" },
+  { progress: 32, line: "Procesando estacion: Tesla 1.", summary: "Processing Tesla 1" },
+  { progress: 48, line: "Finalizado OK: Tesla 1.", summary: "Tesla 1 complete" },
+  { progress: 62, line: "Procesando estacion: Tesla 2.", summary: "Processing Tesla 2" },
+  { progress: 76, line: "Finalizado OK: Tesla 2.", summary: "Tesla 2 complete" },
+  { progress: 90, line: "Procesando estacion: Tesla 3.", summary: "Processing Tesla 3" },
+  { progress: 100, line: "Sync terminado.", summary: "Sync complete", status: "success" }
+];
 
 function buildQuery(filters, extra = {}) {
   const params = new URLSearchParams();
@@ -1729,6 +1749,168 @@ function ChangeLogScreen({ entries, onRefresh }) {
   );
 }
 
+function syncTimestamp() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function syncDateTimeLabel(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose }) {
+  const timersRef = useRef([]);
+  const running = run.status === "running";
+
+  useEffect(() => () => {
+    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    timersRef.current = [];
+  }, []);
+
+  function startSimulation(event) {
+    event.preventDefault();
+
+    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    timersRef.current = [];
+
+    const startedAt = new Date().toISOString();
+    const firstLog = {
+      id: `${Date.now()}-0`,
+      time: syncTimestamp(),
+      level: "info",
+      line: "Iniciando flujo de sincronizacion."
+    };
+
+    onRunChange({
+      status: "running",
+      progress: 3,
+      logs: [firstLog],
+      startedAt,
+      finishedAt: null,
+      summary: "Preparing preview"
+    });
+
+    SIMULATED_SYNC_STEPS.forEach((step, index) => {
+      const timerId = window.setTimeout(() => {
+        const finishedAt = step.status === "success" ? new Date().toISOString() : null;
+        onRunChange((current) => {
+          const nextRun = {
+            ...current,
+            status: step.status || "running",
+            progress: step.progress,
+            summary: step.summary,
+            finishedAt,
+            logs: [
+              ...current.logs,
+              {
+                id: `${Date.now()}-${index + 1}`,
+                time: syncTimestamp(),
+                level: step.status === "success" ? "success" : "info",
+                line: step.line
+              }
+            ]
+          };
+
+          if (step.status === "success") {
+            onHistoryAdd({
+              id: `${Date.now()}-history`,
+              status: "success",
+              startedAt: nextRun.startedAt,
+              finishedAt,
+              summary: "Preview completed",
+              logCount: nextRun.logs.length
+            });
+          }
+
+          return nextRun;
+        });
+      }, 700 * (index + 1));
+      timersRef.current.push(timerId);
+    });
+  }
+
+  function resetPreview() {
+    timersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    timersRef.current = [];
+    onRunChange(EMPTY_SYNC_RUN);
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget && !running) onClose(); }}>
+      <div className="glidepath-modal remote-sync-modal">
+        <div className="multi-select-modal-head">
+          <span>Remote Sync</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" disabled={running}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <form className="remote-sync-form" onSubmit={startSimulation}>
+          <button type="submit" className="button-primary" disabled={running}>
+            <RefreshCw size={15} />
+            {running ? "Running" : "Start Sync"}
+          </button>
+        </form>
+
+        <div className={`remote-sync-status ${run.status}`}>
+          <div className="remote-sync-status-head">
+            <span>{run.summary}</span>
+            <strong>{Math.round(run.progress)}%</strong>
+          </div>
+          <div className="remote-sync-progress" aria-label="Sync progress">
+            <span style={{ width: `${Math.max(0, Math.min(100, run.progress))}%` }} />
+          </div>
+          <div className="remote-sync-meta">
+            <span>Status: {run.status}</span>
+            {run.startedAt ? <span>Started: {syncDateTimeLabel(run.startedAt)}</span> : null}
+            {run.finishedAt ? <span>Finished: {syncDateTimeLabel(run.finishedAt)}</span> : null}
+          </div>
+        </div>
+
+        <section className="remote-sync-section">
+          <div className="remote-sync-section-head">
+            <span>Logs</span>
+          </div>
+          <div className="remote-sync-console" role="log" aria-live="polite">
+            {run.logs.length ? run.logs.map((log) => (
+              <div className={`remote-sync-log-line ${log.level}`} key={log.id}>
+                <span>{log.time}</span>
+                <p>{log.line}</p>
+              </div>
+            )) : <div className="remote-sync-empty">No logs yet.</div>}
+          </div>
+        </section>
+
+        <section className="remote-sync-section">
+          <div className="remote-sync-section-head">
+            <span>History</span>
+            {run.status !== "idle" && !running ? (
+              <button type="button" className="small-button" onClick={resetPreview}>
+                Reset
+              </button>
+            ) : null}
+          </div>
+          <div className="remote-sync-history">
+            {history.length ? history.map((item) => (
+              <div className="remote-sync-history-item" key={item.id}>
+                <span className={`remote-sync-history-status ${item.status}`}>{item.status}</span>
+                <span>{syncDateTimeLabel(item.finishedAt || item.startedAt)}</span>
+                <strong>{item.summary}</strong>
+                <span>{item.logCount} logs</span>
+              </div>
+            )) : <div className="empty-option">No history yet.</div>}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function filterDataToStations(data, allowedStations) {
   if (!data) return data;
   const allowed = new Set(allowedStations);
@@ -1764,6 +1946,9 @@ function App() {
   const [showGlidepathManager, setShowGlidepathManager] = useState(false);
   const [changeLogEntries, setChangeLogEntries] = useState([]);
   const [showChangeLogManager, setShowChangeLogManager] = useState(false);
+  const [showRemoteSyncManager, setShowRemoteSyncManager] = useState(false);
+  const [remoteSyncRun, setRemoteSyncRun] = useState(EMPTY_SYNC_RUN);
+  const [remoteSyncHistory, setRemoteSyncHistory] = useState([]);
 
   useEffect(() => {
     setOptionsLoading(true);
@@ -1957,6 +2142,15 @@ function App() {
           onRefresh={reloadChangeLog}
         />
       ) : null}
+      {showRemoteSyncManager ? (
+        <RemoteSyncManager
+          run={remoteSyncRun}
+          history={remoteSyncHistory}
+          onRunChange={setRemoteSyncRun}
+          onHistoryAdd={(item) => setRemoteSyncHistory((current) => [item, ...current])}
+          onClose={() => setShowRemoteSyncManager(false)}
+        />
+      ) : null}
       <main>
         {activeScreen === "changes" ? (
           <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
@@ -1969,6 +2163,10 @@ function App() {
             <p>{levelTitle}</p>
           </div>
           <div className="actions">
+            <button type="button" className="button-primary" onClick={() => setShowRemoteSyncManager(true)} title="Remote Sync">
+              <RefreshCw size={17} />
+              Sync
+            </button>
             <button type="button" className="button-success" onClick={downloadExcel} disabled={!canDownloadExcel} title="Download Excel">
               <Download size={17} />
               {exporting ? "Exporting" : "Excel"}
