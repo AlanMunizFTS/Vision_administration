@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -157,6 +158,10 @@ def load_config_from_env():
             "base_sync_dir": env_value("SYNC_BASE_SYNC_DIR", r"C:\FTS_SYNC"),
             "add_to_central_script": env_value("SYNC_ADD_TO_CENTRAL_SCRIPT", "add_to_database_central.py"),
             "logs_folder_name": env_value("SYNC_LOGS_FOLDER_NAME", "logs"),
+        },
+        "export": {
+            "retries": env_int("SYNC_EXPORT_RETRIES", 2),
+            "retry_delay_seconds": env_int("SYNC_EXPORT_RETRY_DELAY_SECONDS", 5),
         },
         "retention": {
             "enabled": env_bool("SYNC_RETENTION_ENABLED", True),
@@ -536,7 +541,36 @@ def ensure_station_ssh_access(station, config, ssh_command, logger):
         logger.warning("No se pudo preparar llave SSH para %s: %s", station["name"], exc)
 
 
-def export_remote_database(station, config, today_dir, logger, ssh_command):
+def model_results_copy_is_complete(input_path):
+    encoding = detect_encoding(input_path)
+    found_copy = False
+
+    with open(input_path, "r", encoding=encoding, errors="replace") as file:
+        for line in file:
+            clean_line = line.lstrip("\ufeff")
+            if clean_line.startswith("COPY public.model_results"):
+                found_copy = True
+                break
+
+        if not found_copy:
+            return False, "No se encontro COPY public.model_results en el SQL."
+
+        for line in file:
+            if line.strip() == r"\.":
+                return True, None
+
+    file_size = input_path.stat().st_size if input_path.exists() else 0
+    tail_lines = tail_text_lines(input_path, encoding)
+    tail_preview = " | ".join(tail_lines) if tail_lines else "<sin lineas>"
+    return (
+        False,
+        "No se encontro el cierre del COPY: \\. "
+        f"El dump puede estar incompleto o truncado. Archivo={input_path}, "
+        f"tamano={file_size} bytes, ultimas_lineas={tail_preview}",
+    )
+
+
+def export_remote_database_once(station, config, today_dir, logger, ssh_command):
     output_file = today_dir / station["output_file"]
     if output_file.exists():
         output_file.unlink()
@@ -566,7 +600,34 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
         station["name"],
         file_size / 1024 / 1024,
     )
+    complete, issue = model_results_copy_is_complete(output_file)
+    if not complete:
+        raise RuntimeError(issue)
+
     return output_file
+
+
+def export_remote_database(station, config, today_dir, logger, ssh_command):
+    retries = max(0, int(config.get("export", {}).get("retries", 0)))
+    delay_seconds = max(0, int(config.get("export", {}).get("retry_delay_seconds", 0)))
+    attempts = retries + 1
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if attempt > 1:
+                logger.info("Reintentando exportacion de %s (%s/%s)", station["name"], attempt, attempts)
+            return export_remote_database_once(station, config, today_dir, logger, ssh_command)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning("Exportacion de %s fallo en intento %s/%s: %s", station["name"], attempt, attempts, exc)
+            if delay_seconds:
+                logger.info("Esperando %s segundos antes de reintentar %s", delay_seconds, station["name"])
+                time.sleep(delay_seconds)
+
+    raise last_error
 
 
 def write_centralized_sql(input_path, source_station, output_path, logger):
