@@ -159,6 +159,7 @@ El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /
 - `DELETE /api/v1/change-log/{entry_id}`
 
 Note: report endpoints read from `public.model_results_central`; glidepath, employee, and change-log endpoints create their own auxiliary tables to store projects, targets, employees, and change events.
+Employee records require `full_name`; `employee_number` is optional.
 
 ## Rules
 

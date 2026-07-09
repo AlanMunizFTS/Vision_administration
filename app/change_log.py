@@ -49,14 +49,13 @@ def get_employees(db):
 def create_employee(db, employee_number, full_name):
     employee_number = str(employee_number or "").strip()
     full_name = str(full_name or "").strip()
-    if not employee_number:
-        raise ValueError("employee_number is required")
     if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
         raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
     if not full_name:
         raise ValueError("full_name is required")
     if len(full_name) > EMPLOYEE_NAME_MAX_LENGTH:
         raise ValueError(f"full_name must be at most {EMPLOYEE_NAME_MAX_LENGTH} characters")
+    employee_number = employee_number or None
 
     row = db.fetch_one(
         """
@@ -77,18 +76,17 @@ def update_employee(db, employee_id, employee_number=None, full_name=None):
     params = []
     if employee_number is not None:
         employee_number = str(employee_number or "").strip()
-        if not employee_number:
-            raise ValueError("employee_number cannot be empty")
         if len(employee_number) > EMPLOYEE_NUMBER_MAX_LENGTH:
             raise ValueError(f"employee_number must be at most {EMPLOYEE_NUMBER_MAX_LENGTH} characters")
-        existing = db.fetch_one(
-            "SELECT id FROM employees WHERE employee_number = %s AND id <> %s",
-            [employee_number, employee_id],
-        )
-        if existing:
-            raise ValueError("employee_number already exists")
+        if employee_number:
+            existing = db.fetch_one(
+                "SELECT id FROM employees WHERE employee_number = %s AND id <> %s",
+                [employee_number, employee_id],
+            )
+            if existing:
+                raise ValueError("employee_number already exists")
         fields.append("employee_number = %s")
-        params.append(employee_number)
+        params.append(employee_number or None)
     if full_name is not None:
         full_name = str(full_name or "").strip()
         if not full_name:

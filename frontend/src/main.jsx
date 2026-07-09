@@ -1506,7 +1506,7 @@ function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
 
 function employeeDisplay(employee) {
   if (!employee) return "";
-  return `${employee.employee_number} - ${employee.full_name}`;
+  return employee.employee_number ? `${employee.employee_number} - ${employee.full_name}` : employee.full_name;
 }
 
 function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoading, onCreate, onSuccessMessageClear }) {
@@ -1734,7 +1734,6 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
 
   function employeeNumberError(value) {
     const trimmed = value.trim();
-    if (!trimmed) return "Employee number is required.";
     if (trimmed.length > 10) return "Employee number must be 10 characters or fewer.";
     return "";
   }
@@ -1803,7 +1802,7 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
         <form className="employee-form" onSubmit={createEmployee}>
           <div className="subproject-field-row">
             <label>
-              Employee number
+              Employee number (optional)
               <input
                 type="text"
                 name="employee_number"
@@ -1816,7 +1815,6 @@ function AddEmployeeModal({ employee, onClose, onRefresh }) {
                   syncEmployeeNumberValidation(event.target);
                 }}
                 onInvalid={(event) => syncEmployeeNumberValidation(event.target)}
-                required
               />
             </label>
             <label>
@@ -1901,7 +1899,7 @@ function EmployeeScreen({ employees, loading, onOpenCreate, onOpenEdit, onRefres
           <tbody>
             {sortedEmployees.length ? sortedEmployees.map((employee) => (
               <tr className="employee-table-row" key={employee.id}>
-                <td className="employee-table-number">{employee.employee_number}</td>
+                <td className="employee-table-number">{employee.employee_number || "-"}</td>
                 <td className="employee-table-name">{employee.full_name}</td>
                 <td className="employee-table-actions">
                   <button type="button" className="icon-button" onClick={() => onOpenEdit(employee)} aria-label="Edit employee">
@@ -1966,7 +1964,7 @@ function ChangeLogScreen({ entries, onRefresh }) {
                 <td className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</td>
                 <td className="change-log-row-machine">{stationPairName(entry.station_pair)}</td>
                 <td className="change-log-row-side">{entry.side}</td>
-                <td className="change-log-row-employee">{entry.employee_number && entry.employee_name ? `${entry.employee_number} - ${entry.employee_name}` : "Unassigned"}</td>
+                <td className="change-log-row-employee">{entry.employee_name ? employeeDisplay({ employee_number: entry.employee_number, full_name: entry.employee_name }) : "Unassigned"}</td>
                 <td><span className="change-log-row-category">{entry.category}</span></td>
                 <td className="change-log-row-label">{entry.category === "Other" ? entry.label : ""}</td>
                 <td className="change-log-row-desc">{entry.description || "No description"}</td>
