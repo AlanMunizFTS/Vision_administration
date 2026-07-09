@@ -116,7 +116,7 @@ py -m app.IE_db
 
 Por defecto guarda:
 
-- Log unico del boton: `app\sync.log`.
+- Log unico del boton: `reports\sync.log`.
 - SQL temporal: `app\_sync_temp`, eliminado al terminar.
 
 El sync reintenta por etapas. `SYNC_EXPORT_RETRIES` aplica solo a la exportacion SSH; `SYNC_STATION_RETRIES` reintenta la estacion desde el ultimo checkpoint alcanzado (`ssh`, `export` o `import`). Si la exportacion ya termino y falla el import, el siguiente intento reutiliza el SQL exportado y continua desde `import`.

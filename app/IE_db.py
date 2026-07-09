@@ -13,8 +13,9 @@ from app.config import load_env_file
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
 DEFAULT_CONFIG = SCRIPT_DIR / "machines.json"
-DEFAULT_LOG = SCRIPT_DIR / "sync.log"
+DEFAULT_LOG = PROJECT_DIR / "reports" / "sync.log"
 
 
 def normalize_source_station(source_station):
@@ -1127,7 +1128,7 @@ def parse_args():
         "--log",
         default=DEFAULT_LOG,
         type=Path,
-        help="Ruta del log unico. Por defecto usa app/sync.log.",
+        help="Ruta del log unico. Por defecto usa reports/sync.log.",
     )
     return parser.parse_args()
 

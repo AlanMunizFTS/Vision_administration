@@ -10,8 +10,9 @@ from app.config import load_env_file
 
 
 APP_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = APP_DIR.parent
 SYNC_SCRIPT = APP_DIR / "IE_db.py"
-DEFAULT_SYNC_LOG = APP_DIR / "sync.log"
+DEFAULT_SYNC_LOG = PROJECT_DIR / "reports" / "sync.log"
 
 
 def get_sync_log_path():
