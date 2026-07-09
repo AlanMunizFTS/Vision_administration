@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Factory, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Shield, Trash2, UserPlus, Users, Wrench, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -31,6 +31,12 @@ const PART_NUMBER_BAND_COLORS = ["#c7d2fe", "#bbf7d0", "#fde68a", "#fbcfe8", "#b
 const MACHINE_ALL = "__all__";
 const CHANGE_LOG_CATEGORIES = ["Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"];
 const CHANGE_LOG_DESCRIPTION_MIN_LENGTH = 20;
+const CHANGE_LOG_TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, index) => {
+  const totalMinutes = index * 15;
+  const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minute = String(totalMinutes % 60).padStart(2, "0");
+  return `${hour}:${minute}`;
+});
 const SCRAP_HOURS = Array.from({ length: 24 }, (_, hour) => {
   const hourText = String(hour).padStart(2, "0");
   return { value: `${hourText}:00:00`, label: `${hourText}:00` };
@@ -1106,6 +1112,9 @@ function Sidebar({
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(activeScreen === "changes");
+  const [productionOpen, setProductionOpen] = useState(activeScreen === "scrap");
+  const [adminOpen, setAdminOpen] = useState(activeScreen === "employees");
   const pairs = stationPairOptions(options);
   const heads = headOptions(options);
 
@@ -1185,24 +1194,50 @@ function Sidebar({
       </div>
 
       <div className="sidebar-glidepath">
-        <button type="button" className="nav-item" onClick={onOpenGlidepath}>
-          <span className="nav-item-label"><Flag size={15} /> Glidepath Projects</span>
+        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={() => setMaintenanceOpen((v) => !v)}>
+          <span className="nav-item-label"><Wrench size={15} /> Maintenance</span>
+          <ChevronDown size={14} style={{ transform: maintenanceOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className="nav-item" onClick={onOpenChangeLog}>
-          <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        {maintenanceOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenChangeLog}>
+              <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
+              <span className="nav-item-label"><ListChecks size={15} /> Historic</span>
+            </button>
+          </div>
+        ) : null}
+
+        <button type="button" className={`nav-item ${activeScreen === "scrap" ? "active" : ""}`} onClick={() => setProductionOpen((v) => !v)}>
+          <span className="nav-item-label"><Factory size={15} /> Production</span>
+          <ChevronDown size={14} style={{ transform: productionOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className="nav-item" onClick={onOpenScrap}>
-          <span className="nav-item-label"><AlertTriangle size={15} /> Add Scrap</span>
+        {productionOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenScrap}>
+              <span className="nav-item-label"><AlertTriangle size={15} /> Add Scrap</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "scrap" ? "active" : ""}`} onClick={onOpenScrapEntries}>
+              <span className="nav-item-label"><ListChecks size={15} /> Scrap</span>
+            </button>
+          </div>
+        ) : null}
+
+        <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={() => setAdminOpen((v) => !v)}>
+          <span className="nav-item-label"><Shield size={15} /> Admin</span>
+          <ChevronDown size={14} style={{ transform: adminOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
-          <span className="nav-item-label"><Users size={15} /> Employees</span>
-        </button>
-        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
-          <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
-        </button>
-        <button type="button" className={`nav-item ${activeScreen === "scrap" ? "active" : ""}`} onClick={onOpenScrapEntries}>
-          <span className="nav-item-label"><ListChecks size={15} /> Scrap</span>
-        </button>
+        {adminOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenGlidepath}>
+              <span className="nav-item-label"><Flag size={15} /> Glidepath Projects</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
+              <span className="nav-item-label"><Users size={15} /> Employees</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </nav>
   );
@@ -1526,6 +1561,13 @@ function syncChangeLogDescriptionValidation(input) {
   input.setCustomValidity(changeLogDescriptionError(input.value));
 }
 
+function changeLogTimeOptions(value) {
+  if (value && !CHANGE_LOG_TIME_OPTIONS.includes(value)) {
+    return [value, ...CHANGE_LOG_TIME_OPTIONS];
+  }
+  return CHANGE_LOG_TIME_OPTIONS;
+}
+
 function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ? String(employees[0].id) : "");
@@ -1636,10 +1678,15 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
       <div className="subproject-field-row">
         <label>
           Time (optional)
-          <input type="time" value={changeTime} onChange={(e) => {
+          <select value={changeTime} onChange={(e) => {
             onSuccessMessageClear();
             setChangeTime(e.target.value);
-          }} />
+          }}>
+            <option value="">No time</option>
+            {CHANGE_LOG_TIME_OPTIONS.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
         </label>
         <span className="form-spacer" aria-hidden="true" />
       </div>
@@ -1791,7 +1838,12 @@ function ChangeLogEntryModal({ entry, pairOptions, optionsLoading, employees, em
           <div className="subproject-field-row">
             <label>
               Time (optional)
-              <input type="time" value={changeTime} onChange={(event) => setChangeTime(event.target.value)} />
+              <select value={changeTime} onChange={(event) => setChangeTime(event.target.value)}>
+                <option value="">No time</option>
+                {changeLogTimeOptions(changeTime).map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
             </label>
             <label>
               Category
