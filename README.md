@@ -119,6 +119,10 @@ Por defecto guarda:
 - Log unico del boton: `app\sync.log`.
 - SQL temporal: `app\_sync_temp`, eliminado al terminar.
 
+El sync reintenta por etapas. `SYNC_EXPORT_RETRIES` aplica solo a la exportacion SSH; `SYNC_STATION_RETRIES` reintenta la estacion desde el ultimo checkpoint alcanzado (`ssh`, `export` o `import`). Si la exportacion ya termino y falla el import, el siguiente intento reutiliza el SQL exportado y continua desde `import`.
+
+Para estaciones donde el SSH corta el dump a medias, define `SYNC_SSH_REMOTE_OUTPUT_DIR`, por ejemplo `C:\FTS_SYNC\_remote_exports`. En ese modo `IE_db.py` ejecuta el export remoto con `--output`, espera a que el dump quede completo en la estacion y despues lo lee hacia el servidor. Si esa lectura falla, `SYNC_FETCH_RETRIES` reintenta leer el mismo archivo remoto sin volver a ejecutar `pg_dump`. Puedes limitarlo a estaciones especificas con `SYNC_SSH_REMOTE_OUTPUT_STATIONS=ART_ENDFORM_1861_LEFT`.
+
 El sync puede preparar una llave SSH local si no existe y saltar ese paso cuando la conexion ya funciona. Para instalar la llave automaticamente en las estaciones se requiere `SYNC_SSH_COPY_PASSWORD`; si no se define, el log indicara que la llave debe instalarse manualmente. `SYNC_SSH_AUTHORIZED_KEYS_MODE` acepta `windows_admin`, `windows_user` o `linux_user`.
 
 El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /api/v1/sync-db` para consultar estado/log. Para conectar esto a un boton, el backend debe correr con acceso a `ssh` y a PostgreSQL central. En Docker puede usar `psql` directo con `SYNC_POSTGRES_HOST`; fuera de Docker puede usar `docker exec` contra `SYNC_POSTGRES_DOCKER_CONTAINER`.

@@ -169,6 +169,12 @@ def parse_env_stations(raw_stations):
     return stations
 
 
+def parse_env_list(raw_value):
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
 def load_config_from_env():
     load_env_file()
     return {
@@ -181,6 +187,12 @@ def load_config_from_env():
         "export": {
             "retries": env_int("SYNC_EXPORT_RETRIES", 2),
             "retry_delay_seconds": env_int("SYNC_EXPORT_RETRY_DELAY_SECONDS", 5),
+            "fetch_retries": env_int("SYNC_FETCH_RETRIES", 3),
+            "fetch_retry_delay_seconds": env_int("SYNC_FETCH_RETRY_DELAY_SECONDS", 5),
+        },
+        "station_retry": {
+            "retries": env_int("SYNC_STATION_RETRIES", 1),
+            "retry_delay_seconds": env_int("SYNC_STATION_RETRY_DELAY_SECONDS", 10),
         },
         "ssh": {
             "user": env_value("SYNC_SSH_USER", required=True),
@@ -196,6 +208,8 @@ def load_config_from_env():
             "copy_password": env_value("SYNC_SSH_COPY_PASSWORD"),
             "authorized_keys_mode": env_value("SYNC_SSH_AUTHORIZED_KEYS_MODE", "windows_admin"),
             "remote_command": env_value("SYNC_SSH_REMOTE_COMMAND", required=True),
+            "remote_output_dir": env_value("SYNC_SSH_REMOTE_OUTPUT_DIR"),
+            "remote_output_stations": parse_env_list(env_value("SYNC_SSH_REMOTE_OUTPUT_STATIONS")),
         },
         "postgres": {
             "docker_container": env_value("SYNC_POSTGRES_DOCKER_CONTAINER", "postgres-fts"),
@@ -666,6 +680,73 @@ def temp_column_select(alias, columns, column):
     return temp_column_expression(alias, columns, column, f"NULL::{column_type}")
 
 
+def quote_remote_arg(value):
+    return '"' + str(value).replace('"', r'\"') + '"'
+
+
+def remote_path_join(base_dir, filename):
+    base_dir = str(base_dir).rstrip("\\/")
+    filename = Path(filename).name
+    separator = "\\" if ("\\" in base_dir or ":" in base_dir) else "/"
+    return f"{base_dir}{separator}{filename}"
+
+
+def fetch_remote_file(station, config, remote_path, output_file, logger, ssh_command):
+    export_config = config.get("export", {})
+    retries = max(0, int(export_config.get("fetch_retries") or 0))
+    delay_seconds = max(0, int(export_config.get("fetch_retry_delay_seconds") or 0))
+    attempts = retries + 1
+    ssh_target = ssh_target_for_station(station, config)
+    ssh_args = build_ssh_args(config)
+    fetch_command = f"type {quote_remote_arg(remote_path)}"
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if output_file.exists():
+                output_file.unlink()
+
+            logger.info(
+                "Leyendo dump remoto de %s desde %s. Intento %s/%s",
+                station["name"],
+                remote_path,
+                attempt,
+                attempts,
+            )
+            run_process(
+                [ssh_command, *ssh_args, ssh_target, fetch_command],
+                logger,
+                f"Lectura SSH de dump remoto de {station['name']}",
+                stdout_path=output_file,
+            )
+
+            complete, issue = model_results_copy_is_complete(output_file)
+            if not complete:
+                raise RuntimeError(issue)
+
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "Lectura del dump remoto de %s fallo en intento %s/%s: %s",
+                station["name"],
+                attempt,
+                attempts,
+                exc,
+            )
+            if delay_seconds:
+                logger.info(
+                    "Esperando %s segundos antes de releer dump remoto de %s",
+                    delay_seconds,
+                    station["name"],
+                )
+                time.sleep(delay_seconds)
+
+    raise last_error
+
+
 def export_remote_database_once(station, config, output_dir, logger, ssh_command):
     output_file = output_dir / station["output_file"]
     if output_file.exists():
@@ -675,14 +756,28 @@ def export_remote_database_once(station, config, output_dir, logger, ssh_command
 
     ssh_target = ssh_target_for_station(station, config)
     remote_command = str(config["ssh"]["remote_command"])
+    remote_output_dir = config["ssh"].get("remote_output_dir")
+    remote_output_stations = set(config["ssh"].get("remote_output_stations") or [])
+    remote_output_path = None
+    if remote_output_dir and (not remote_output_stations or station["name"] in remote_output_stations):
+        remote_output_path = remote_path_join(remote_output_dir, station["output_file"])
+        remote_command = f"{remote_command} --output {quote_remote_arg(remote_output_path)}"
 
     logger.info("Exportando %s desde %s hacia %s", station["name"], ssh_target, output_file)
     run_process(
         [ssh_command, *ssh_args, ssh_target, remote_command],
         logger,
         f"Exportacion SSH de {station['name']}",
-        stdout_path=output_file,
+        stdout_path=None if remote_output_path else output_file,
     )
+
+    if remote_output_path:
+        logger.info(
+            "Exportacion remota OK de %s. Descargando archivo validado desde %s",
+            station["name"],
+            remote_output_path,
+        )
+        fetch_remote_file(station, config, remote_output_path, output_file, logger, ssh_command)
 
     if not output_file.exists():
         raise RuntimeError(f"No se genero archivo SQL para {station['name']}: {output_file}")
@@ -902,6 +997,72 @@ def import_to_central_database(station, input_file, config, temp_dir, logger):
     transform_sql.unlink(missing_ok=True)
 
 
+def process_station_with_resume(station, config, temp_dir, logger, ssh_command):
+    retries = max(0, int(config.get("station_retry", {}).get("retries", 0)))
+    delay_seconds = max(0, int(config.get("station_retry", {}).get("retry_delay_seconds", 0)))
+    attempts = retries + 1
+
+    ssh_checked = False
+    sql_file = None
+    last_error = None
+    failed_stage = "ssh"
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if attempt > 1:
+                logger.info(
+                    "Reintentando %s desde etapa %s (%s/%s)",
+                    station["name"],
+                    failed_stage,
+                    attempt,
+                    attempts,
+                )
+
+            if not ssh_checked:
+                failed_stage = "ssh"
+                ensure_station_ssh_access(station, config, ssh_command, logger)
+                ssh_checked = True
+                logger.info("Checkpoint %s: SSH listo", station["name"])
+
+            if sql_file is None:
+                failed_stage = "export"
+                sql_file = export_remote_database(station, config, temp_dir, logger, ssh_command)
+                logger.info("Checkpoint %s: exportacion lista", station["name"])
+
+            failed_stage = "import"
+            import_to_central_database(station, sql_file, config, temp_dir, logger)
+            logger.info("Checkpoint %s: importacion lista", station["name"])
+            return
+        except Exception as exc:
+            last_error = exc
+            if failed_stage == "ssh":
+                ssh_checked = False
+            if failed_stage == "export":
+                sql_file = None
+
+            if attempt >= attempts:
+                break
+
+            logger.warning(
+                "%s fallo en etapa %s durante intento %s/%s: %s",
+                station["name"],
+                failed_stage,
+                attempt,
+                attempts,
+                exc,
+            )
+            if delay_seconds:
+                logger.info(
+                    "Esperando %s segundos antes de reintentar %s desde %s",
+                    delay_seconds,
+                    station["name"],
+                    failed_stage,
+                )
+                time.sleep(delay_seconds)
+
+    raise last_error
+
+
 def show_central_counts(config, logger):
     target_table = config.get("postgres", {}).get("target_table")
     source_column = config.get("postgres", {}).get("source_station_column")
@@ -1015,9 +1176,7 @@ def main():
                 logger.info("------------------------------------------------------------")
                 logger.info("Procesando estacion: %s", station["name"])
 
-                ensure_station_ssh_access(station, config, ssh_command, logger)
-                sql_file = export_remote_database(station, config, temp_dir, logger, ssh_command)
-                import_to_central_database(station, sql_file, config, temp_dir, logger)
+                process_station_with_resume(station, config, temp_dir, logger, ssh_command)
 
                 ok_count += 1
                 logger.info("Finalizado OK: %s", station["name"])
