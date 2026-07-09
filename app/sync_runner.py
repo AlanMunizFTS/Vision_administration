@@ -105,7 +105,7 @@ class SyncRunner:
             self._return_code = return_code
             self._finished_at = datetime.now()
 
-    def _log_tail(self, max_lines=40):
+    def _log_tail(self, max_lines=160):
         sync_log = get_sync_log_path()
         if not sync_log.exists():
             return []
@@ -113,7 +113,13 @@ class SyncRunner:
         with open(sync_log, "r", encoding="utf-8", errors="replace") as file:
             lines = file.readlines()
 
-        return [line.rstrip("\n") for line in lines[-max_lines:]]
+        start_index = 0
+        for index, line in enumerate(lines):
+            if "Iniciando FTS DWH Sync" in line:
+                start_index = index
+
+        latest_run_lines = lines[start_index:]
+        return [line.rstrip("\n") for line in latest_run_lines[-max_lines:]]
 
     @staticmethod
     def _format_datetime(value):

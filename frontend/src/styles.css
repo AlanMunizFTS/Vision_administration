@@ -866,8 +866,36 @@ button:focus-visible {
 
 /* ---------- Remote sync ---------- */
 
-.remote-sync-modal {
-  width: min(780px, 100%);
+.sync-action {
+  position: relative;
+}
+
+.remote-sync-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  width: min(520px, calc(100vw - 32px));
+}
+
+.remote-sync-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 20px 45px rgba(15, 18, 23, 0.2);
+}
+
+.remote-sync-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
 }
 
 .remote-sync-form {
@@ -875,9 +903,6 @@ button:focus-visible {
   justify-content: flex-start;
   align-items: center;
   gap: 10px;
-  padding: 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
 }
 
 .remote-sync-status {
@@ -896,17 +921,14 @@ button:focus-visible {
 }
 
 .remote-sync-status-head,
-.remote-sync-section-head,
-.remote-sync-meta,
-.remote-sync-history-item {
+.remote-sync-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.remote-sync-status-head span,
-.remote-sync-section-head span {
+.remote-sync-status-head span {
   font-size: 13px;
   font-weight: 750;
   color: var(--text);
@@ -915,26 +937,7 @@ button:focus-visible {
 .remote-sync-status-head strong {
   color: var(--accent);
   font-size: 13px;
-}
-
-.remote-sync-progress {
-  height: 8px;
-  border-radius: 999px;
-  background: #ffffff;
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.remote-sync-progress span {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width 0.25s ease;
-}
-
-.remote-sync-status.success .remote-sync-progress span {
-  background: var(--good);
+  text-transform: capitalize;
 }
 
 .remote-sync-meta {
@@ -945,22 +948,161 @@ button:focus-visible {
   font-weight: 650;
 }
 
-.remote-sync-section {
+.remote-sync-stations {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-sync-machine {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.remote-sync-machine > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.remote-sync-station {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.sync-led {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  box-shadow: 0 0 0 3px rgba(203, 213, 225, 0.35);
+}
+
+.remote-sync-station.running .sync-led {
+  background: #eab308;
+  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.2);
+}
+
+.remote-sync-station.success .sync-led {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18);
+}
+
+.remote-sync-station.error .sync-led {
+  background: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
+}
+
+.remote-sync-station div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.remote-sync-station strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+.remote-sync-station small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.remote-sync-station em {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 650;
+  text-align: right;
+}
+
+.remote-sync-history {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.remote-sync-section-head {
-  min-height: 30px;
+.remote-sync-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.remote-sync-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.remote-sync-history[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.remote-sync-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.remote-sync-history-item strong {
+  color: var(--text);
+}
+
+.remote-sync-history-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.remote-sync-history-status.success {
+  background: var(--good-soft);
+  color: var(--good-soft-text);
+}
+
+.remote-sync-history-status.error {
+  background: var(--bad-soft);
+  color: var(--bad-soft-text);
 }
 
 .remote-sync-console {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-height: 176px;
-  max-height: 240px;
+  max-height: 180px;
   overflow-y: auto;
   padding: 10px;
   border-radius: var(--radius-sm);
@@ -1002,44 +1144,6 @@ button:focus-visible {
 
 .remote-sync-empty {
   color: #9ca3af;
-}
-
-.remote-sync-history {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.remote-sync-history-item {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-muted);
-  color: var(--text-muted);
-  font-size: 12.5px;
-}
-
-.remote-sync-history-item strong {
-  color: var(--text);
-}
-
-.remote-sync-history-status {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 750;
-  text-transform: capitalize;
-}
-
-.remote-sync-history-status.success {
-  background: var(--good-soft);
-  color: var(--good-soft-text);
 }
 
 /* ---------- Status banners ---------- */
@@ -1558,8 +1662,18 @@ tbody tr:nth-child(even):hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .remote-sync-dropdown {
+    left: 0;
+    right: auto;
+    width: min(520px, calc(100vw - 24px));
+  }
+
   .remote-sync-form button {
     width: 100%;
+  }
+
+  .remote-sync-stations {
+    grid-template-columns: 1fr;
   }
 
   .remote-sync-log-line {
