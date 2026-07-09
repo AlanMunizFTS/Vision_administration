@@ -116,9 +116,8 @@ py -m app.IE_db
 
 Por defecto guarda:
 
-- Log unico: `reports\sync.log` cuando corre en Docker con el volumen `./reports:/app/reports`; fuera de Docker usa `app\sync.log` salvo que definas `SYNC_LOG_PATH`.
-- Dumps diarios: `app\Database_ddMMyy`
-- SQL temporal: `app\Database_ddMMyy\_temp`, eliminado al terminar
+- Log unico del boton: `app\sync.log`.
+- SQL temporal: `app\_sync_temp`, eliminado al terminar.
 
 El sync puede preparar una llave SSH local si no existe y saltar ese paso cuando la conexion ya funciona. Para instalar la llave automaticamente en las estaciones se requiere `SYNC_SSH_COPY_PASSWORD`; si no se define, el log indicara que la llave debe instalarse manualmente. `SYNC_SSH_AUTHORIZED_KEYS_MODE` acepta `windows_admin`, `windows_user` o `linux_user`.
 
@@ -159,7 +158,6 @@ El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /
 - `DELETE /api/v1/change-log/{entry_id}`
 
 Note: report endpoints read from `public.model_results_central`; glidepath, employee, and change-log endpoints create their own auxiliary tables to store projects, targets, employees, and change events.
-Employee records require `full_name`; `employee_number` is optional.
 
 ## Rules
 

@@ -1,7 +1,7 @@
+import os
 import subprocess
 import sys
 import threading
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -14,18 +14,6 @@ DEFAULT_SYNC_LOG = APP_DIR / "sync.log"
 
 
 def get_sync_log_path():
-    load_env_file()
-    configured_path = os.getenv("SYNC_LOG_PATH")
-    if configured_path:
-        log_path = Path(configured_path)
-        if log_path.is_absolute():
-            return log_path
-        return (APP_DIR.parent / log_path).resolve()
-
-    reports_dir = APP_DIR.parent / "reports"
-    if reports_dir.exists():
-        return reports_dir / "sync.log"
-
     return DEFAULT_SYNC_LOG
 
 
