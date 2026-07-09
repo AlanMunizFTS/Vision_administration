@@ -52,13 +52,18 @@ class ChangeLogTests(unittest.TestCase):
         _, params = db.calls[0]
         self.assertEqual(params, ["2102", "Tavitas Salazar, Tiberio"])
 
-    def test_create_employee_rejects_blank_number(self):
-        db = FakeChangeLogDb()
+    def test_create_employee_allows_blank_number(self):
+        db = FakeChangeLogDb(fetch_one_rows=[{
+            "id": 7,
+            "employee_number": None,
+            "full_name": "User Name",
+        }])
 
-        with self.assertRaisesRegex(ValueError, "employee_number is required"):
-            change_log.create_employee(db, employee_number=" ", full_name="User Name")
+        row = change_log.create_employee(db, employee_number=" ", full_name="User Name")
 
-        self.assertEqual(db.calls, [])
+        self.assertIsNone(row["employee_number"])
+        _, params = db.calls[0]
+        self.assertEqual(params, [None, "User Name"])
 
     def test_create_employee_rejects_blank_name(self):
         db = FakeChangeLogDb()
@@ -118,6 +123,19 @@ class ChangeLogTests(unittest.TestCase):
             change_log.update_employee(db, 7, employee_number="2102")
 
         self.assertEqual(len(db.calls), 1)
+
+    def test_update_employee_allows_clearing_number(self):
+        db = FakeChangeLogDb(fetch_one_rows=[{
+            "id": 7,
+            "employee_number": None,
+            "full_name": "Updated Name",
+        }])
+
+        row = change_log.update_employee(db, 7, employee_number=" ")
+
+        self.assertIsNone(row["employee_number"])
+        _, params = db.calls[0]
+        self.assertEqual(params, [None, 7])
 
     def test_update_employee_rejects_blank_name(self):
         db = FakeChangeLogDb()

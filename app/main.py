@@ -536,7 +536,7 @@ class ChangeLogEntryUpdate(BaseModel):
 
 
 class EmployeeCreate(BaseModel):
-    employee_number: str
+    employee_number: str | None = None
     full_name: str
 
 
