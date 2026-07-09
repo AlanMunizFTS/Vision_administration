@@ -469,19 +469,12 @@ function glidepathValueAt(subproject, isoDate) {
   ];
   if (isoDate < points[0].date) return null;
 
-  for (let i = 0; i < points.length - 1; i++) {
-    const from = points[i];
-    const to = points[i + 1];
-    if (isoDate >= from.date && isoDate <= to.date) {
-      const fromTime = new Date(`${from.date}T00:00:00`).getTime();
-      const toTime = new Date(`${to.date}T00:00:00`).getTime();
-      const currentTime = new Date(`${isoDate}T00:00:00`).getTime();
-      if (toTime === fromTime) return to.value;
-      const ratio = (currentTime - fromTime) / (toTime - fromTime);
-      return from.value + (to.value - from.value) * ratio;
-    }
+  let currentValue = points[0].value;
+  for (const point of points.slice(1)) {
+    if (isoDate < point.date) break;
+    currentValue = point.value;
   }
-  return points[points.length - 1].value;
+  return currentValue;
 }
 
 function glidepathChartRows(rows, subprojects, dateKey) {
@@ -822,7 +815,7 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
                 {glidepathSubprojects.map((subproject) => (
                   <Line
                     key={`glidepath-${subproject.id}`}
-                    type="linear"
+                    type="stepAfter"
                     dataKey={`__glidepath_${subproject.id}`}
                     name={`Glidepath: ${subproject.name}`}
                     stroke="#16a34a"
