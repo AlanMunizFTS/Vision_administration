@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Factory, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Shield, Trash2, UserPlus, Users, Wrench, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -1106,6 +1106,9 @@ function Sidebar({
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(activeScreen === "changes");
+  const [productionOpen, setProductionOpen] = useState(activeScreen === "scrap");
+  const [adminOpen, setAdminOpen] = useState(activeScreen === "employees");
   const pairs = stationPairOptions(options);
   const heads = headOptions(options);
 
@@ -1185,24 +1188,50 @@ function Sidebar({
       </div>
 
       <div className="sidebar-glidepath">
-        <button type="button" className="nav-item" onClick={onOpenGlidepath}>
-          <span className="nav-item-label"><Flag size={15} /> Glidepath Projects</span>
+        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={() => setMaintenanceOpen((v) => !v)}>
+          <span className="nav-item-label"><Wrench size={15} /> Maintenance</span>
+          <ChevronDown size={14} style={{ transform: maintenanceOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className="nav-item" onClick={onOpenChangeLog}>
-          <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        {maintenanceOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenChangeLog}>
+              <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
+              <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
+            </button>
+          </div>
+        ) : null}
+
+        <button type="button" className={`nav-item ${activeScreen === "scrap" ? "active" : ""}`} onClick={() => setProductionOpen((v) => !v)}>
+          <span className="nav-item-label"><Factory size={15} /> Production</span>
+          <ChevronDown size={14} style={{ transform: productionOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className="nav-item" onClick={onOpenScrap}>
-          <span className="nav-item-label"><AlertTriangle size={15} /> Add Scrap</span>
+        {productionOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenScrap}>
+              <span className="nav-item-label"><AlertTriangle size={15} /> Add Scrap</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "scrap" ? "active" : ""}`} onClick={onOpenScrapEntries}>
+              <span className="nav-item-label"><ListChecks size={15} /> Scrap</span>
+            </button>
+          </div>
+        ) : null}
+
+        <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={() => setAdminOpen((v) => !v)}>
+          <span className="nav-item-label"><Shield size={15} /> Admin</span>
+          <ChevronDown size={14} style={{ transform: adminOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
         </button>
-        <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
-          <span className="nav-item-label"><Users size={15} /> Employees</span>
-        </button>
-        <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
-          <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
-        </button>
-        <button type="button" className={`nav-item ${activeScreen === "scrap" ? "active" : ""}`} onClick={onOpenScrapEntries}>
-          <span className="nav-item-label"><ListChecks size={15} /> Scrap</span>
-        </button>
+        {adminOpen ? (
+          <div className="nav-subgroup">
+            <button type="button" className="nav-subitem" onClick={onOpenGlidepath}>
+              <span className="nav-item-label"><Flag size={15} /> Glidepath Projects</span>
+            </button>
+            <button type="button" className={`nav-subitem ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
+              <span className="nav-item-label"><Users size={15} /> Employees</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </nav>
   );

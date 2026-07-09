@@ -156,7 +156,7 @@ main {
   color: var(--accent-soft-text);
 }
 
-.nav-item .nav-item-label {
+.nav-item-label {
   display: flex;
   align-items: center;
   gap: 8px;
