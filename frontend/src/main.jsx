@@ -2511,7 +2511,7 @@ function syncStationStates(status, logs) {
 
       for (const log of stationLogs) {
         if (/procesando estacion/i.test(log.line)) state = "running";
-        if (/error en|fallo con exitcode|failed/i.test(log.line) || log.level === "error") state = "error";
+        if (/error en/i.test(log.line)) state = "error";
         if (/finalizado ok|importacion ok/i.test(log.line)) state = "success";
       }
     }

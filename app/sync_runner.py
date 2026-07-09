@@ -142,9 +142,6 @@ class SyncRunner:
                 current_station = None
                 continue
 
-            if current_station and re.search(r"fallo con ExitCode|failed", message, re.IGNORECASE):
-                statuses[current_station] = "error"
-
         if not running:
             for station, state in list(statuses.items()):
                 if state == "running":
