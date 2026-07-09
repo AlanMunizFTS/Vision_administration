@@ -31,6 +31,12 @@ const PART_NUMBER_BAND_COLORS = ["#c7d2fe", "#bbf7d0", "#fde68a", "#fbcfe8", "#b
 const MACHINE_ALL = "__all__";
 const CHANGE_LOG_CATEGORIES = ["Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"];
 const CHANGE_LOG_DESCRIPTION_MIN_LENGTH = 20;
+const CHANGE_LOG_TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, index) => {
+  const totalMinutes = index * 15;
+  const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minute = String(totalMinutes % 60).padStart(2, "0");
+  return `${hour}:${minute}`;
+});
 const SCRAP_HOURS = Array.from({ length: 24 }, (_, hour) => {
   const hourText = String(hour).padStart(2, "0");
   return { value: `${hourText}:00:00`, label: `${hourText}:00` };
@@ -1555,6 +1561,13 @@ function syncChangeLogDescriptionValidation(input) {
   input.setCustomValidity(changeLogDescriptionError(input.value));
 }
 
+function changeLogTimeOptions(value) {
+  if (value && !CHANGE_LOG_TIME_OPTIONS.includes(value)) {
+    return [value, ...CHANGE_LOG_TIME_OPTIONS];
+  }
+  return CHANGE_LOG_TIME_OPTIONS;
+}
+
 function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ? String(employees[0].id) : "");
@@ -1665,10 +1678,15 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
       <div className="subproject-field-row">
         <label>
           Time (optional)
-          <input type="time" value={changeTime} onChange={(e) => {
+          <select value={changeTime} onChange={(e) => {
             onSuccessMessageClear();
             setChangeTime(e.target.value);
-          }} />
+          }}>
+            <option value="">No time</option>
+            {CHANGE_LOG_TIME_OPTIONS.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
         </label>
         <span className="form-spacer" aria-hidden="true" />
       </div>
@@ -1820,7 +1838,12 @@ function ChangeLogEntryModal({ entry, pairOptions, optionsLoading, employees, em
           <div className="subproject-field-row">
             <label>
               Time (optional)
-              <input type="time" value={changeTime} onChange={(event) => setChangeTime(event.target.value)} />
+              <select value={changeTime} onChange={(event) => setChangeTime(event.target.value)}>
+                <option value="">No time</option>
+                {changeLogTimeOptions(changeTime).map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
             </label>
             <label>
               Category
