@@ -82,7 +82,7 @@ def setup_logger(log_path):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
     file_handler.setFormatter(formatter)
 
     console_handler = logging.StreamHandler(sys.stdout)

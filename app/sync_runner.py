@@ -50,6 +50,7 @@ class SyncRunner:
             sync_config = get_sync_config_path()
             sync_log = get_sync_log_path()
             sync_log.parent.mkdir(parents=True, exist_ok=True)
+            sync_log.write_text("", encoding="utf-8")
             self._process = subprocess.Popen(
                 [
                     sys.executable,

@@ -31,6 +31,10 @@ const PART_NUMBER_BAND_COLORS = ["#c7d2fe", "#bbf7d0", "#fde68a", "#fbcfe8", "#b
 const MACHINE_ALL = "__all__";
 const CHANGE_LOG_CATEGORIES = ["Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"];
 const CHANGE_LOG_DESCRIPTION_MIN_LENGTH = 20;
+const SCRAP_HOURS = Array.from({ length: 24 }, (_, hour) => {
+  const hourText = String(hour).padStart(2, "0");
+  return { value: `${hourText}:00:00`, label: `${hourText}:00` };
+});
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATION_DISPLAY_NAMES = {
   ART_ENDFORM_1859: "Tesla 1",
@@ -1102,8 +1106,10 @@ function Sidebar({
   loading,
   onOpenGlidepath,
   onOpenChangeLog,
+  onOpenScrap,
   onOpenEmployees,
-  onOpenChanges
+  onOpenChanges,
+  onOpenScrapEntries
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
   const [headOpen, setHeadOpen] = useState(false);
@@ -1192,11 +1198,17 @@ function Sidebar({
         <button type="button" className="nav-item" onClick={onOpenChangeLog}>
           <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
         </button>
+        <button type="button" className="nav-item" onClick={onOpenScrap}>
+          <span className="nav-item-label"><AlertTriangle size={15} /> Add Scrap</span>
+        </button>
         <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
           <span className="nav-item-label"><Users size={15} /> Employees</span>
         </button>
         <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
           <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
+        </button>
+        <button type="button" className={`nav-item ${activeScreen === "scrap" ? "active" : ""}`} onClick={onOpenScrapEntries}>
+          <span className="nav-item-label"><ListChecks size={15} /> Scrap</span>
         </button>
       </div>
     </nav>
@@ -1864,6 +1876,306 @@ function ChangeLogManager({ pairOptions, optionsLoading, employees, employeesLoa
   );
 }
 
+function NewScrapForm({ pairOptions, optionsLoading, onCreate, onSuccessMessageClear }) {
+  const [stationPair, setStationPair] = useState(pairOptions[0] || "");
+  const [scrapDate, setScrapDate] = useState("");
+  const [scrapTime, setScrapTime] = useState(SCRAP_HOURS[0].value);
+  const [quantity, setQuantity] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!stationPair && pairOptions.length) {
+      setStationPair(pairOptions[0]);
+    }
+  }, [pairOptions, stationPair]);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!stationPair || !scrapDate || quantity === "") return;
+    setSaving(true);
+    try {
+      await onCreate({
+        station_pair: stationPair,
+        scrap_date: scrapDate,
+        scrap_time: scrapTime,
+        quantity: Number(quantity)
+      });
+      setScrapDate("");
+      setScrapTime(SCRAP_HOURS[0].value);
+      setQuantity("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="new-change-log-form" onSubmit={submit}>
+      <div className="subproject-field-row">
+        <label>
+          Machine
+          <select
+            value={stationPair}
+            onChange={(event) => {
+              onSuccessMessageClear();
+              setStationPair(event.target.value);
+            }}
+            disabled={optionsLoading || !pairOptions.length}
+            required
+          >
+            {pairOptions.map((pair) => (
+              <option key={pair} value={pair}>{stationPairName(pair)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Date
+          <input type="date" value={scrapDate} onChange={(event) => {
+            onSuccessMessageClear();
+            setScrapDate(event.target.value);
+          }} required />
+        </label>
+      </div>
+      <div className="subproject-field-row">
+        <label>
+          Hour
+          <select value={scrapTime} onChange={(event) => {
+            onSuccessMessageClear();
+            setScrapTime(event.target.value);
+          }} required>
+            {SCRAP_HOURS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Quantity
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={quantity}
+            onChange={(event) => {
+              onSuccessMessageClear();
+              setQuantity(event.target.value);
+            }}
+            required
+          />
+        </label>
+      </div>
+      <button type="submit" className="button-primary" disabled={saving || optionsLoading || !pairOptions.length}>
+        <Plus size={15} /> Add Scrap
+      </button>
+    </form>
+  );
+}
+
+function ScrapManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
+  const [successMessage, setSuccessMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function createEntry(payload) {
+    setError("");
+    try {
+      await apiRequest("/api/v1/scrap", { method: "POST", body: JSON.stringify(payload) });
+      onRefresh();
+      setSuccessMessage("New scrap added.");
+    } catch (exc) {
+      setError(exc.message);
+    }
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>Add Scrap</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        {optionsLoading ? <div className="loading add-log-loading">Loading machines...</div> : null}
+        {error ? <div className="error add-log-loading">{error}</div> : null}
+        {successMessage ? <div className="success add-log-success">{successMessage}</div> : null}
+
+        <NewScrapForm
+          pairOptions={pairOptions}
+          optionsLoading={optionsLoading}
+          onCreate={createEntry}
+          onSuccessMessageClear={() => {
+            setSuccessMessage("");
+            setError("");
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ScrapEntryModal({ entry, pairOptions, optionsLoading, onClose, onRefresh }) {
+  const pairChoices = pairOptions.includes(entry.station_pair) ? pairOptions : [entry.station_pair, ...pairOptions].filter(Boolean);
+  const [stationPair, setStationPair] = useState(entry.station_pair || "");
+  const [scrapDate, setScrapDate] = useState(entry.scrap_date || "");
+  const [scrapTime, setScrapTime] = useState(entry.scrap_time || SCRAP_HOURS[0].value);
+  const [quantity, setQuantity] = useState(entry.quantity || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function saveEntry(event) {
+    event.preventDefault();
+    if (!stationPair || !scrapDate || quantity === "") return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/scrap/${entry.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          station_pair: stationPair,
+          scrap_date: scrapDate,
+          scrap_time: scrapTime,
+          quantity: Number(quantity)
+        })
+      });
+      await onRefresh();
+      onClose();
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>Edit Scrap</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        {error ? <div className="error add-log-loading">{error}</div> : null}
+
+        <form className="new-change-log-form" onSubmit={saveEntry}>
+          <div className="subproject-field-row">
+            <label>
+              Machine
+              <select value={stationPair} onChange={(event) => setStationPair(event.target.value)} disabled={optionsLoading || !pairChoices.length} required>
+                {pairChoices.map((pair) => (
+                  <option key={pair} value={pair}>{stationPairName(pair)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Date
+              <input type="date" value={scrapDate} onChange={(event) => setScrapDate(event.target.value)} required />
+            </label>
+          </div>
+          <div className="subproject-field-row">
+            <label>
+              Hour
+              <select value={scrapTime} onChange={(event) => setScrapTime(event.target.value)} required>
+                {SCRAP_HOURS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Quantity
+              <input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+            </label>
+          </div>
+          <button type="submit" className="button-primary" disabled={saving || optionsLoading || !pairChoices.length}>
+            <Pencil size={15} /> Save Scrap
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ScrapScreen({ entries, pairOptions, optionsLoading, onRefresh }) {
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [error, setError] = useState("");
+
+  async function deleteEntry(entryId) {
+    setError("");
+    try {
+      await apiRequest(`/api/v1/scrap/${entryId}`, { method: "DELETE" });
+      onRefresh();
+    } catch (exc) {
+      setError(exc.message);
+    }
+  }
+
+  const sortedEntries = [...entries].sort((a, b) => {
+    const dateCompare = b.scrap_date.localeCompare(a.scrap_date);
+    if (dateCompare !== 0) return dateCompare;
+    return (b.scrap_time || "").localeCompare(a.scrap_time || "");
+  });
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <span className="eyebrow">Vision - Quality Analytics</span>
+          <h1>Scrap</h1>
+          <p>Scrap entries by machine and hour</p>
+        </div>
+      </header>
+
+      {editingEntry ? (
+        <ScrapEntryModal
+          entry={editingEntry}
+          pairOptions={pairOptions}
+          optionsLoading={optionsLoading}
+          onClose={() => setEditingEntry(null)}
+          onRefresh={onRefresh}
+        />
+      ) : null}
+
+      {error ? <div className="error">{error}</div> : null}
+
+      <section className="change-log-screen">
+        <table className="change-log-table scrap-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Machine</th>
+              <th>Hour</th>
+              <th>Quantity</th>
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedEntries.length ? sortedEntries.map((entry) => (
+              <tr className="change-log-row" key={entry.id}>
+                <td className="change-log-row-date">{entry.scrap_date}</td>
+                <td className="change-log-row-machine">{stationPairName(entry.station_pair)}</td>
+                <td className="change-log-row-side">{entry.scrap_time ? entry.scrap_time.slice(0, 5) : ""}</td>
+                <td><span className="change-log-row-category">{numberFormat(entry.quantity)}</span></td>
+                <td className="change-log-row-actions">
+                  <button type="button" className="icon-button" onClick={() => setEditingEntry(entry)} aria-label="Edit scrap">
+                    <Pencil size={14} />
+                  </button>
+                  <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete scrap">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td className="empty-option" colSpan="5">No scrap yet. Add one from Add Scrap.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    </>
+  );
+}
+
 function AddEmployeeModal({ employee, onClose, onRefresh }) {
   const isEditing = Boolean(employee);
   const [employeeNumber, setEmployeeNumber] = useState(employee?.employee_number || "");
@@ -2189,13 +2501,18 @@ function syncLineMentionsStation(line, station) {
 function syncStationStates(status, logs) {
   const running = Boolean(status.running);
   const finished = Boolean(status.finished_at);
-  const failed = finished && status.return_code !== 0;
 
   return SYNC_STATIONS.map((station) => {
     const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
-    const hasSuccess = stationLogs.some((log) => /finalizado ok|importacion ok/i.test(log.line));
-    const hasError = stationLogs.some((log) => log.level === "error" || /error en/i.test(log.line));
-    const state = hasError || (failed && !hasSuccess) ? "error" : hasSuccess ? "success" : running ? "running" : "idle";
+    let state = stationLogs.length || running ? "running" : "idle";
+
+    for (const log of stationLogs) {
+      if (/procesando estacion/i.test(log.line)) state = "running";
+      if (/error en|fallo con exitcode|failed/i.test(log.line) || log.level === "error") state = "error";
+      if (/finalizado ok|importacion ok/i.test(log.line)) state = "success";
+    }
+
+    if (!running && state === "running") state = "error";
 
     return {
       ...station,
@@ -2475,6 +2792,8 @@ function App() {
   const [showGlidepathManager, setShowGlidepathManager] = useState(false);
   const [changeLogEntries, setChangeLogEntries] = useState([]);
   const [showChangeLogManager, setShowChangeLogManager] = useState(false);
+  const [scrapEntries, setScrapEntries] = useState([]);
+  const [showScrapManager, setShowScrapManager] = useState(false);
   const [showRemoteSyncManager, setShowRemoteSyncManager] = useState(false);
   const [remoteSyncRun, setRemoteSyncRun] = useState(EMPTY_SYNC_RUN);
   const [remoteSyncHistory, setRemoteSyncHistory] = useState([]);
@@ -2505,6 +2824,12 @@ function App() {
       .catch(() => {});
   };
 
+  const reloadScrap = () => {
+    return fetchJson("/api/v1/scrap")
+      .then((payload) => setScrapEntries(payload.items || []))
+      .catch(() => {});
+  };
+
   const reloadEmployees = () => {
     setEmployeesLoading(true);
     return fetchJson("/api/v1/employees")
@@ -2518,6 +2843,7 @@ function App() {
   useEffect(() => {
     reloadProjects();
     reloadChangeLog();
+    reloadScrap();
     reloadEmployees();
   }, []);
 
@@ -2673,8 +2999,10 @@ function App() {
         loading={loading}
         onOpenGlidepath={() => setShowGlidepathManager(true)}
         onOpenChangeLog={() => setShowChangeLogManager(true)}
+        onOpenScrap={() => setShowScrapManager(true)}
         onOpenEmployees={() => setActiveScreen("employees")}
         onOpenChanges={() => setActiveScreen("changes")}
+        onOpenScrapEntries={() => setActiveScreen("scrap")}
       />
       {showGlidepathManager ? (
         <GlidepathManager
@@ -2694,6 +3022,14 @@ function App() {
           onRefresh={reloadChangeLog}
         />
       ) : null}
+      {showScrapManager ? (
+        <ScrapManager
+          pairOptions={stationPairOptions(options)}
+          optionsLoading={optionsLoading}
+          onClose={() => setShowScrapManager(false)}
+          onRefresh={reloadScrap}
+        />
+      ) : null}
       {showEmployeeManager ? (
         <AddEmployeeModal
           employee={editingEmployee}
@@ -2710,6 +3046,13 @@ function App() {
             employees={employees}
             employeesLoading={employeesLoading}
             onRefresh={reloadChangeLog}
+          />
+        ) : activeScreen === "scrap" ? (
+          <ScrapScreen
+            entries={scrapEntries}
+            pairOptions={stationPairOptions(options)}
+            optionsLoading={optionsLoading}
+            onRefresh={reloadScrap}
           />
         ) : activeScreen === "employees" ? (
           <EmployeeScreen
