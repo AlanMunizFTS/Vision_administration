@@ -269,7 +269,16 @@ def resolve_command(*command_names):
     raise RuntimeError(f"No se encontro ninguno de estos comandos en PATH: {', '.join(command_names)}")
 
 
-def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, stdin_text=None, env=None):
+def run_process(
+    args,
+    logger,
+    step_name,
+    stdin_path=None,
+    stdout_path=None,
+    stdin_text=None,
+    env=None,
+    stdout_append=False,
+):
     logger.info("Ejecutando: %s", step_name)
 
     stdin_handle = None
@@ -282,7 +291,7 @@ def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, stdi
         elif stdin_text is not None:
             input_data = stdin_text.encode("utf-8")
         if stdout_path:
-            stdout_handle = open(stdout_path, "wb")
+            stdout_handle = open(stdout_path, "ab" if stdout_append else "wb")
 
         process = subprocess.run(
             args,
@@ -685,6 +694,28 @@ def quote_remote_arg(value):
     return '"' + str(value).replace('"', r'\"') + '"'
 
 
+def powershell_literal(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def remote_file_stream_command(remote_path, offset):
+    return (
+        "powershell -NoProfile -Command "
+        "\"$path = "
+        f"{powershell_literal(remote_path)}; "
+        f"$offset = {int(offset)}; "
+        "$out = [Console]::OpenStandardOutput(); "
+        "$fs = [System.IO.File]::OpenRead($path); "
+        "try { "
+        "[void]$fs.Seek($offset, [System.IO.SeekOrigin]::Begin); "
+        "$fs.CopyTo($out); "
+        "} finally { "
+        "$fs.Dispose(); "
+        "$out.Flush(); "
+        "}\""
+    )
+
+
 def remote_path_join(base_dir, filename):
     base_dir = str(base_dir).rstrip("\\/")
     filename = Path(filename).name
@@ -699,26 +730,27 @@ def fetch_remote_file(station, config, remote_path, output_file, logger, ssh_com
     attempts = retries + 1
     ssh_target = ssh_target_for_station(station, config)
     ssh_args = build_ssh_args(config)
-    fetch_command = f"type {quote_remote_arg(remote_path)}"
     last_error = None
 
     for attempt in range(1, attempts + 1):
         try:
-            if output_file.exists():
-                output_file.unlink()
+            resume_offset = output_file.stat().st_size if output_file.exists() else 0
+            fetch_command = remote_file_stream_command(remote_path, resume_offset)
 
             logger.info(
-                "Leyendo dump remoto de %s desde %s. Intento %s/%s",
+                "Leyendo dump remoto de %s desde %s. Intento %s/%s. Offset local: %s bytes",
                 station["name"],
                 remote_path,
                 attempt,
                 attempts,
+                resume_offset,
             )
             run_process(
                 [ssh_command, *ssh_args, ssh_target, fetch_command],
                 logger,
                 f"Lectura SSH de dump remoto de {station['name']}",
                 stdout_path=output_file,
+                stdout_append=resume_offset > 0,
             )
 
             complete, issue = model_results_copy_is_complete(output_file)
@@ -739,7 +771,7 @@ def fetch_remote_file(station, config, remote_path, output_file, logger, ssh_com
             )
             if delay_seconds:
                 logger.info(
-                    "Esperando %s segundos antes de releer dump remoto de %s",
+                    "Esperando %s segundos antes de continuar lectura remota de %s",
                     delay_seconds,
                     station["name"],
                 )
@@ -748,37 +780,91 @@ def fetch_remote_file(station, config, remote_path, output_file, logger, ssh_com
     raise last_error
 
 
+def export_remote_database_legacy(station, config, output_file, logger, ssh_command):
+    ssh_target = ssh_target_for_station(station, config)
+    remote_command = str(config["ssh"]["remote_command"])
+    ssh_args = build_ssh_args(config)
+
+    if output_file.exists():
+        output_file.unlink()
+
+    logger.info("Exportando %s desde %s hacia %s por stdout legacy", station["name"], ssh_target, output_file)
+    run_process(
+        [ssh_command, *ssh_args, ssh_target, remote_command],
+        logger,
+        f"Exportacion SSH de {station['name']}",
+        stdout_path=output_file,
+    )
+
+    return output_file
+
+
+def export_remote_database_remote_output(station, config, output_file, logger, ssh_command, remote_output_path):
+    ssh_target = ssh_target_for_station(station, config)
+    ssh_args = build_ssh_args(config)
+    remote_command = (
+        f"{config['ssh']['remote_command']} --output {quote_remote_arg(remote_output_path)}"
+    )
+
+    logger.info(
+        "Exportando %s en archivo remoto %s usando --output",
+        station["name"],
+        remote_output_path,
+    )
+    run_process(
+        [ssh_command, *ssh_args, ssh_target, remote_command],
+        logger,
+        f"Exportacion SSH remota de {station['name']}",
+    )
+
+    logger.info(
+        "Exportacion remota OK de %s. Descargando archivo validado desde %s",
+        station["name"],
+        remote_output_path,
+    )
+    fetch_remote_file(station, config, remote_output_path, output_file, logger, ssh_command)
+
+    return output_file
+
+
+def should_use_remote_output(station, config):
+    remote_output_dir = config["ssh"].get("remote_output_dir")
+    if not remote_output_dir:
+        return None
+
+    remote_output_stations = set(config["ssh"].get("remote_output_stations") or [])
+    if remote_output_stations and station["name"] not in remote_output_stations:
+        return None
+
+    return remote_path_join(remote_output_dir, station["output_file"])
+
+
 def export_remote_database_once(station, config, output_dir, logger, ssh_command):
     output_file = output_dir / station["output_file"]
     if output_file.exists():
         output_file.unlink()
 
-    ssh_args = build_ssh_args(config)
-
-    ssh_target = ssh_target_for_station(station, config)
-    remote_command = str(config["ssh"]["remote_command"])
-    remote_output_dir = config["ssh"].get("remote_output_dir")
-    remote_output_stations = set(config["ssh"].get("remote_output_stations") or [])
-    remote_output_path = None
-    if remote_output_dir and (not remote_output_stations or station["name"] in remote_output_stations):
-        remote_output_path = remote_path_join(remote_output_dir, station["output_file"])
-        remote_command = f"{remote_command} --output {quote_remote_arg(remote_output_path)}"
-
-    logger.info("Exportando %s desde %s hacia %s", station["name"], ssh_target, output_file)
-    run_process(
-        [ssh_command, *ssh_args, ssh_target, remote_command],
-        logger,
-        f"Exportacion SSH de {station['name']}",
-        stdout_path=None if remote_output_path else output_file,
-    )
+    remote_output_path = should_use_remote_output(station, config)
 
     if remote_output_path:
-        logger.info(
-            "Exportacion remota OK de %s. Descargando archivo validado desde %s",
-            station["name"],
-            remote_output_path,
-        )
-        fetch_remote_file(station, config, remote_output_path, output_file, logger, ssh_command)
+        try:
+            export_remote_database_remote_output(
+                station,
+                config,
+                output_file,
+                logger,
+                ssh_command,
+                remote_output_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "%s no pudo usar --output remoto (%s). Usando exportacion legacy por stdout.",
+                station["name"],
+                exc,
+            )
+            export_remote_database_legacy(station, config, output_file, logger, ssh_command)
+    else:
+        export_remote_database_legacy(station, config, output_file, logger, ssh_command)
 
     if not output_file.exists():
         raise RuntimeError(f"No se genero archivo SQL para {station['name']}: {output_file}")
