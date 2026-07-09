@@ -1198,7 +1198,7 @@ function Sidebar({
               <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
             </button>
             <button type="button" className={`nav-subitem ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
-              <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
+              <span className="nav-item-label"><ListChecks size={15} /> Historic</span>
             </button>
           </div>
         ) : null}
