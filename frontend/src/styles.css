@@ -867,6 +867,10 @@ button:focus-visible {
   border-spacing: 0 5px;
 }
 
+.scrap-table {
+  min-width: 620px;
+}
+
 .change-log-table th {
   padding: 0 10px 6px;
   color: var(--text-faint);

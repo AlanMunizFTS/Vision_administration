@@ -6,7 +6,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app import change_log, glidepath, reports
+from app import change_log, glidepath, reports, scrap
 from app.db import close_db, get_db
 from app.migrator import run_migrations
 from app.sync_runner import sync_runner
@@ -30,6 +30,7 @@ def startup_event():
         run_migrations()
     glidepath.ensure_schema(get_db())
     change_log.ensure_schema(get_db())
+    scrap.ensure_schema(get_db())
 
 
 @app.on_event("shutdown")
@@ -535,6 +536,20 @@ class ChangeLogEntryUpdate(BaseModel):
     description: str | None = None
 
 
+class ScrapEntryCreate(BaseModel):
+    station_pair: str
+    scrap_date: date
+    scrap_time: time
+    quantity: int
+
+
+class ScrapEntryUpdate(BaseModel):
+    station_pair: str | None = None
+    scrap_date: date | None = None
+    scrap_time: time | None = None
+    quantity: int | None = None
+
+
 class EmployeeCreate(BaseModel):
     employee_number: str | None = None
     full_name: str
@@ -631,6 +646,50 @@ def change_log_update(entry_id: int, payload: ChangeLogEntryUpdate, db=Depends(d
 def change_log_delete(entry_id: int, db=Depends(db_dependency)):
     try:
         change_log.delete_entry(db, entry_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.get("/api/v1/scrap")
+def scrap_list(db=Depends(db_dependency)):
+    return {"items": scrap.get_entries(db)}
+
+
+@app.post("/api/v1/scrap")
+def scrap_create(payload: ScrapEntryCreate, db=Depends(db_dependency)):
+    try:
+        return scrap.create_entry(
+            db,
+            station_pair=payload.station_pair,
+            scrap_date=payload.scrap_date,
+            scrap_time=payload.scrap_time,
+            quantity=payload.quantity,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.patch("/api/v1/scrap/{entry_id}")
+def scrap_update(entry_id: int, payload: ScrapEntryUpdate, db=Depends(db_dependency)):
+    try:
+        fields = payload.model_dump(exclude_unset=True)
+        return scrap.update_entry(
+            db,
+            entry_id,
+            station_pair=payload.station_pair,
+            scrap_date=payload.scrap_date,
+            scrap_time=fields.get("scrap_time", scrap.UNSET),
+            quantity=payload.quantity,
+        )
+    except ValueError as exc:
+        handle_report_error(exc)
+
+
+@app.delete("/api/v1/scrap/{entry_id}")
+def scrap_delete(entry_id: int, db=Depends(db_dependency)):
+    try:
+        scrap.delete_entry(db, entry_id)
         return {"deleted": True}
     except ValueError as exc:
         handle_report_error(exc)
