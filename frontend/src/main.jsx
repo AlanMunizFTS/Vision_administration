@@ -2503,13 +2503,17 @@ function syncStationStates(status, logs) {
   const finished = Boolean(status.finished_at);
 
   return SYNC_STATIONS.map((station) => {
-    const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
-    let state = stationLogs.length || running ? "running" : "idle";
+    let state = status.station_statuses?.[station.key];
 
-    for (const log of stationLogs) {
-      if (/procesando estacion/i.test(log.line)) state = "running";
-      if (/error en|fallo con exitcode|failed/i.test(log.line) || log.level === "error") state = "error";
-      if (/finalizado ok|importacion ok/i.test(log.line)) state = "success";
+    if (!state) {
+      const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
+      state = stationLogs.length || running ? "running" : "idle";
+
+      for (const log of stationLogs) {
+        if (/procesando estacion/i.test(log.line)) state = "running";
+        if (/error en|fallo con exitcode|failed/i.test(log.line) || log.level === "error") state = "error";
+        if (/finalizado ok|importacion ok/i.test(log.line)) state = "success";
+      }
     }
 
     if (!running && state === "running") state = "error";
