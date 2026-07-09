@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.config import load_env_file
@@ -21,6 +20,26 @@ DEFAULT_LOG = SCRIPT_DIR / "sync.log"
 def normalize_source_station(source_station):
     source_station = source_station.strip().upper()
     return re.sub(r"[^A-Z0-9_-]+", "_", source_station)
+
+
+def get_piece_station_and_side(source_station):
+    source_station = normalize_source_station(source_station)
+
+    match = re.match(r"^ART_ENDFORM_([0-9]+)_(LEFT|RIGHT)$", source_station)
+    if match:
+        station_id = match.group(1)
+        side = match.group(2)
+        return f"ART_{station_id}_ENDFORM", side
+
+    match = re.match(r"^(ART_[0-9]+_ENDFORM)_(LEFT|RIGHT)$", source_station)
+    if match:
+        return match.group(1), match.group(2)
+
+    match = re.match(r"^(.+)_(LEFT|RIGHT)$", source_station)
+    if match:
+        return match.group(1), match.group(2)
+
+    raise ValueError(f"No se pudo obtener LEFT/RIGHT desde source_station: {source_station}")
 
 
 def sql_literal(value):
@@ -163,12 +182,6 @@ def load_config_from_env():
             "retries": env_int("SYNC_EXPORT_RETRIES", 2),
             "retry_delay_seconds": env_int("SYNC_EXPORT_RETRY_DELAY_SECONDS", 5),
         },
-        "retention": {
-            "enabled": env_bool("SYNC_RETENTION_ENABLED", True),
-            "days": env_int("SYNC_RETENTION_DAYS", 7),
-            "folder_prefix": env_value("SYNC_RETENTION_FOLDER_PREFIX", "Database_"),
-            "date_format": env_value("SYNC_RETENTION_DATE_FORMAT", "ddMMyy"),
-        },
         "ssh": {
             "user": env_value("SYNC_SSH_USER", required=True),
             "batch_mode": env_bool("SYNC_SSH_BATCH_MODE", True),
@@ -210,8 +223,6 @@ def require_config(config):
         ("ssh", "remote_command"),
         ("postgres", "database"),
         ("postgres", "user"),
-        ("retention", "folder_prefix"),
-        ("retention", "date_format"),
     ]
 
     for section, key in required_paths:
@@ -241,21 +252,6 @@ def resolve_command(*command_names):
             return command_name
 
     raise RuntimeError(f"No se encontro ninguno de estos comandos en PATH: {', '.join(command_names)}")
-
-
-def python_date_format(config_format):
-    replacements = {
-        "dd": "%d",
-        "MM": "%m",
-        "yyyy": "%Y",
-        "yy": "%y",
-    }
-
-    result = config_format
-    for source, target in replacements.items():
-        result = result.replace(source, target)
-
-    return result
 
 
 def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, stdin_text=None, env=None):
@@ -570,8 +566,108 @@ def model_results_copy_is_complete(input_path):
     )
 
 
-def export_remote_database_once(station, config, today_dir, logger, ssh_command):
-    output_file = today_dir / station["output_file"]
+TEMP_COLUMN_TYPES = {
+    "id": "bigint",
+    "piece_id": "bigint",
+    "source_piece_id": "bigint",
+    "img_name": "text",
+    "class_name": "text",
+    "confidence": "numeric(5,4)",
+    "created_at": "timestamp without time zone",
+    "model_name": "text",
+    "geometry_type": "text",
+    "coordinates": "jsonb",
+    "image_width": "integer",
+    "image_height": "integer",
+    "part_number": "text",
+    "jsn": "text",
+    "decoat_length": "double precision",
+    "decoat_micrometer": "double precision",
+    "decoat_position": "double precision",
+    "decoat_speed": "real",
+    "decoat_trq": "double precision",
+    "endform_flag_length": "double precision",
+    "endform_flag_pos": "double precision",
+    "endform_hit1": "double precision",
+    "endform_hit2": "double precision",
+    "endform_hit3": "double precision",
+    "endform_position_act": "double precision",
+    "endform_speed_act": "double precision",
+    "endform_trq_act": "double precision",
+}
+
+
+def is_copy_for_table(line, table_name):
+    pattern = rf"^COPY\s+public\.{re.escape(table_name)}\s*\("
+    return re.match(pattern, line) is not None
+
+
+def replace_copy_table(line, table_name, target_table):
+    pattern = rf"^COPY\s+public\.{re.escape(table_name)}(?=\s*\()"
+    return re.sub(pattern, f"COPY {target_table}", line, count=1)
+
+
+def parse_copy_columns(copy_line, table_name):
+    pattern = rf"COPY\s+public\.{re.escape(table_name)}\s*\((.*?)\)\s+FROM\s+stdin"
+    match = re.search(pattern, copy_line, re.IGNORECASE)
+    if not match:
+        raise RuntimeError(f"No se pudo leer la lista de columnas del COPY: {copy_line.strip()}")
+
+    columns = []
+    for raw_column in match.group(1).split(","):
+        column = raw_column.strip().strip('"').lower()
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", column):
+            raise RuntimeError(f"Columna no valida en COPY public.{table_name}: {raw_column.strip()}")
+        if column not in columns:
+            columns.append(column)
+
+    if not columns:
+        raise RuntimeError(f"El COPY public.{table_name} no contiene columnas.")
+    return columns
+
+
+def create_temp_table_sql(table_name, columns):
+    definitions = []
+    for column in columns:
+        column_type = TEMP_COLUMN_TYPES.get(column, "text")
+        definitions.append(f"    {column} {column_type}")
+    return f"CREATE TEMP TABLE {table_name} (\n" + ",\n".join(definitions) + "\n) ON COMMIT DROP;\n"
+
+
+def emit_copy_block(src, dst, first_line, table_name, target_table):
+    copy_columns = parse_copy_columns(first_line, table_name)
+    dst.write(create_temp_table_sql(target_table, copy_columns))
+    dst.write(replace_copy_table(first_line, table_name, target_table))
+
+    for line in src:
+        dst.write(line)
+        if line.strip() == r"\.":
+            return copy_columns
+
+    raise RuntimeError(f"No se encontro el cierre del COPY de public.{table_name}: \\.")
+
+
+def source_id_expression(columns):
+    if "id" in columns:
+        return "m.id"
+    if "piece_id" in columns:
+        return "m.piece_id"
+    raise RuntimeError("El dump no trae columna id ni piece_id para usar como source_id.")
+
+
+def temp_column_expression(alias, columns, column, fallback="NULL"):
+    if column in columns:
+        return f"{alias}.{column}"
+    return fallback
+
+
+def temp_column_select(alias, columns, column):
+    column_type = TEMP_COLUMN_TYPES.get(column, "text")
+    return temp_column_expression(alias, columns, column, f"NULL::{column_type}")
+
+
+def export_remote_database_once(station, config, output_dir, logger, ssh_command):
+    output_file = output_dir / station["output_file"]
     if output_file.exists():
         output_file.unlink()
 
@@ -607,7 +703,7 @@ def export_remote_database_once(station, config, today_dir, logger, ssh_command)
     return output_file
 
 
-def export_remote_database(station, config, today_dir, logger, ssh_command):
+def export_remote_database(station, config, output_dir, logger, ssh_command):
     retries = max(0, int(config.get("export", {}).get("retries", 0)))
     delay_seconds = max(0, int(config.get("export", {}).get("retry_delay_seconds", 0)))
     attempts = retries + 1
@@ -617,7 +713,7 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
         try:
             if attempt > 1:
                 logger.info("Reintentando exportacion de %s (%s/%s)", station["name"], attempt, attempts)
-            return export_remote_database_once(station, config, today_dir, logger, ssh_command)
+            return export_remote_database_once(station, config, output_dir, logger, ssh_command)
         except Exception as exc:
             last_error = exc
             if attempt >= attempts:
@@ -632,68 +728,119 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
 
 def write_centralized_sql(input_path, source_station, output_path, logger):
     source_station = normalize_source_station(source_station)
+    piece_source_station, side = get_piece_station_and_side(source_station)
     encoding = detect_encoding(input_path)
     logger.info("Leyendo %s con codificacion detectada: %s", input_path, encoding)
 
-    found_copy = False
-    finished_copy = False
+    model_results_columns = None
+    pieces_columns = None
 
     with open(input_path, "r", encoding=encoding, errors="replace") as src:
         with open(output_path, "w", encoding="utf-8", newline="") as dst:
             dst.write("BEGIN;\n")
-            dst.write(
-                """
-CREATE TEMP TABLE tmp_model_results (
-    id integer,
-    img_name text,
-    class_name text,
-    confidence numeric(5,4),
-    created_at timestamp without time zone,
-    model_name text,
-    geometry_type text,
-    coordinates jsonb,
-    image_width integer,
-    image_height integer,
-    part_number text
-) ON COMMIT DROP;
-"""
-            )
 
             for line in src:
                 clean_line = line.lstrip("\ufeff")
 
-                if clean_line.startswith("COPY public.model_results"):
-                    dst.write(
-                        clean_line.replace(
-                            "COPY public.model_results",
-                            "COPY tmp_model_results",
-                            1,
-                        )
+                if is_copy_for_table(clean_line, "pieces"):
+                    pieces_columns = emit_copy_block(
+                        src,
+                        dst,
+                        clean_line,
+                        "pieces",
+                        "tmp_pieces",
                     )
-                    found_copy = True
-                    break
+                    continue
 
-            if not found_copy:
+                if is_copy_for_table(clean_line, "model_results"):
+                    model_results_columns = emit_copy_block(
+                        src,
+                        dst,
+                        clean_line,
+                        "model_results",
+                        "tmp_model_results",
+                    )
+                    continue
+
+            if model_results_columns is None:
                 dst.write("ROLLBACK;\n")
                 raise RuntimeError("No se encontro COPY public.model_results en el SQL.")
 
-            for line in src:
-                dst.write(line)
-
-                if line.strip() == r"\.":
-                    finished_copy = True
-                    break
-
-            if not finished_copy:
-                dst.write("ROLLBACK;\n")
-                file_size = input_path.stat().st_size if input_path.exists() else 0
-                tail_lines = tail_text_lines(input_path, encoding)
-                tail_preview = " | ".join(tail_lines) if tail_lines else "<sin lineas>"
-                raise RuntimeError(
-                    "No se encontro el cierre del COPY: \\. "
-                    f"El dump puede estar incompleto o truncado. Archivo={input_path}, "
-                    f"tamano={file_size} bytes, ultimas_lineas={tail_preview}"
+            if pieces_columns is not None:
+                dst.write(
+                    f"""
+INSERT INTO public.pieces (
+    source_piece_id,
+    source_station,
+    side,
+    jsn,
+    created_at,
+    decoat_length,
+    decoat_micrometer,
+    decoat_position,
+    decoat_speed,
+    decoat_trq,
+    endform_flag_length,
+    endform_flag_pos,
+    endform_hit1,
+    endform_hit2,
+    endform_hit3,
+    endform_position_act,
+    endform_speed_act,
+    endform_trq_act
+)
+SELECT
+    {temp_column_select("tp", pieces_columns, "id")} AS source_piece_id,
+    {sql_literal(piece_source_station)} AS source_station,
+    {sql_literal(side)} AS side,
+    {temp_column_select("tp", pieces_columns, "jsn")} AS jsn,
+    COALESCE({temp_column_select("tp", pieces_columns, "created_at")}, CURRENT_TIMESTAMP) AS created_at,
+    {temp_column_select("tp", pieces_columns, "decoat_length")} AS decoat_length,
+    {temp_column_select("tp", pieces_columns, "decoat_micrometer")} AS decoat_micrometer,
+    {temp_column_select("tp", pieces_columns, "decoat_position")} AS decoat_position,
+    {temp_column_select("tp", pieces_columns, "decoat_speed")} AS decoat_speed,
+    {temp_column_select("tp", pieces_columns, "decoat_trq")} AS decoat_trq,
+    {temp_column_select("tp", pieces_columns, "endform_flag_length")} AS endform_flag_length,
+    {temp_column_select("tp", pieces_columns, "endform_flag_pos")} AS endform_flag_pos,
+    {temp_column_select("tp", pieces_columns, "endform_hit1")} AS endform_hit1,
+    {temp_column_select("tp", pieces_columns, "endform_hit2")} AS endform_hit2,
+    {temp_column_select("tp", pieces_columns, "endform_hit3")} AS endform_hit3,
+    {temp_column_select("tp", pieces_columns, "endform_position_act")} AS endform_position_act,
+    {temp_column_select("tp", pieces_columns, "endform_speed_act")} AS endform_speed_act,
+    {temp_column_select("tp", pieces_columns, "endform_trq_act")} AS endform_trq_act
+FROM tmp_pieces tp
+WHERE {temp_column_select("tp", pieces_columns, "jsn")} IS NOT NULL
+ON CONFLICT (source_station, side, jsn)
+DO UPDATE SET
+    source_piece_id = EXCLUDED.source_piece_id,
+    created_at = EXCLUDED.created_at,
+    decoat_length = EXCLUDED.decoat_length,
+    decoat_micrometer = EXCLUDED.decoat_micrometer,
+    decoat_position = EXCLUDED.decoat_position,
+    decoat_speed = EXCLUDED.decoat_speed,
+    decoat_trq = EXCLUDED.decoat_trq,
+    endform_flag_length = EXCLUDED.endform_flag_length,
+    endform_flag_pos = EXCLUDED.endform_flag_pos,
+    endform_hit1 = EXCLUDED.endform_hit1,
+    endform_hit2 = EXCLUDED.endform_hit2,
+    endform_hit3 = EXCLUDED.endform_hit3,
+    endform_position_act = EXCLUDED.endform_position_act,
+    endform_speed_act = EXCLUDED.endform_speed_act,
+    endform_trq_act = EXCLUDED.endform_trq_act;
+"""
                 )
+
+            piece_join_sql = ""
+            piece_select_sql = "NULL::bigint AS piece_id"
+            if pieces_columns is not None and "piece_id" in model_results_columns and "id" in pieces_columns:
+                piece_join_sql = f"""
+LEFT JOIN tmp_pieces tp
+    ON tp.id = m.piece_id
+LEFT JOIN public.pieces p
+    ON p.source_station = {sql_literal(piece_source_station)}
+   AND p.side = {sql_literal(side)}
+   AND p.jsn = tp.jsn"""
+                piece_select_sql = "p.id AS piece_id"
 
             dst.write(
                 f"""
@@ -704,24 +851,28 @@ INSERT INTO public.model_results_central (
     class_name,
     confidence,
     created_at,
-    part_number
+    part_number,
+    piece_id
 )
 SELECT
     {sql_literal(source_station)} AS source_station,
-    id AS source_id,
-    img_name,
-    class_name,
-    confidence,
-    created_at,
-    part_number
-FROM tmp_model_results
+    {source_id_expression(model_results_columns)} AS source_id,
+    {temp_column_select("m", model_results_columns, "img_name")} AS img_name,
+    {temp_column_select("m", model_results_columns, "class_name")} AS class_name,
+    {temp_column_select("m", model_results_columns, "confidence")} AS confidence,
+    {temp_column_select("m", model_results_columns, "created_at")} AS created_at,
+    {temp_column_select("m", model_results_columns, "part_number")} AS part_number,
+    {piece_select_sql}
+FROM tmp_model_results m
+{piece_join_sql}
 ON CONFLICT (source_station, source_id)
 DO UPDATE SET
     img_name = EXCLUDED.img_name,
     class_name = EXCLUDED.class_name,
     confidence = EXCLUDED.confidence,
     created_at = EXCLUDED.created_at,
-    part_number = EXCLUDED.part_number;
+    part_number = COALESCE(EXCLUDED.part_number, model_results_central.part_number),
+    piece_id = COALESCE(EXCLUDED.piece_id, model_results_central.piece_id);
 COMMIT;
 """
             )
@@ -786,32 +937,6 @@ def show_central_counts(config, logger):
         )
 
 
-def remove_old_database_folders(base_dir, folder_prefix, date_format, retention_days, logger):
-    logger.info("Revisando retencion. Se conservaran carpetas de los ultimos %s dias.", retention_days)
-
-    limit_date = datetime.now().date() - timedelta(days=retention_days)
-    for folder in base_dir.glob(f"{folder_prefix}*"):
-        if not folder.is_dir():
-            continue
-
-        date_text = folder.name[len(folder_prefix) :]
-        if not re.fullmatch(r"\d{6}", date_text):
-            logger.warning("Saltando carpeta con formato no reconocido: %s", folder)
-            continue
-
-        try:
-            folder_date = datetime.strptime(date_text, date_format).date()
-        except ValueError as exc:
-            logger.warning("No se pudo interpretar fecha de carpeta '%s': %s", folder, exc)
-            continue
-
-        if folder_date < limit_date:
-            logger.info("Eliminando carpeta antigua de respaldo: %s", folder)
-            shutil.rmtree(folder)
-        else:
-            logger.info("Conservando carpeta: %s", folder)
-
-
 def parse_args():
     load_env_file()
     default_config = os.getenv("SYNC_CONFIG_PATH")
@@ -835,7 +960,7 @@ def parse_args():
         "--work-dir",
         default=SCRIPT_DIR,
         type=Path,
-        help="Carpeta donde se guardan Database_ddMMyy y sync.log. Por defecto usa app.",
+        help="Carpeta base para temporales del sync. Por defecto usa app.",
     )
     parser.add_argument(
         "--log",
@@ -866,20 +991,17 @@ def main():
         postgres_mode = select_postgres_mode(config)
         logger.info("Modo PostgreSQL: %s", postgres_mode)
 
-        folder_prefix = str(config["retention"]["folder_prefix"])
-        date_format = python_date_format(str(config["retention"]["date_format"]))
-        today_folder_name = f"{folder_prefix}{datetime.now().strftime(date_format)}"
-        today_dir = work_dir / today_folder_name
-        temp_dir = today_dir / "_temp"
+        temp_dir = work_dir / "_sync_temp"
 
-        today_dir.mkdir(parents=True, exist_ok=True)
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("============================================================")
         logger.info("Iniciando FTS DWH Sync desde IE_db.py")
         logger.info("ConfigSource: %s", config_source)
         logger.info("Carpeta de trabajo: %s", work_dir)
-        logger.info("Carpeta diaria: %s", today_dir)
+        logger.info("Carpeta temporal: %s", temp_dir)
         logger.info("Log unico: %s", log_path)
         logger.info("============================================================")
 
@@ -894,7 +1016,7 @@ def main():
                 logger.info("Procesando estacion: %s", station["name"])
 
                 ensure_station_ssh_access(station, config, ssh_command, logger)
-                sql_file = export_remote_database(station, config, today_dir, logger, ssh_command)
+                sql_file = export_remote_database(station, config, temp_dir, logger, ssh_command)
                 import_to_central_database(station, sql_file, config, temp_dir, logger)
 
                 ok_count += 1
@@ -915,17 +1037,6 @@ def main():
 
         if temp_dir and temp_dir.exists():
             shutil.rmtree(temp_dir)
-
-        if config.get("retention", {}).get("enabled") is True:
-            remove_old_database_folders(
-                work_dir,
-                folder_prefix,
-                date_format,
-                int(config["retention"].get("days", 7)),
-                logger,
-            )
-        else:
-            logger.info("Retencion deshabilitada desde JSON.")
 
         logger.info("============================================================")
         logger.info("FTS DWH Sync terminado")
