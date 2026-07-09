@@ -941,8 +941,9 @@ button:focus-visible {
 }
 
 .change-log-row-actions {
-  width: 52px;
+  width: 92px;
   text-align: right;
+  white-space: nowrap;
 }
 
 /* ---------- Remote sync ---------- */
