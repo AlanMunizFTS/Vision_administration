@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -35,6 +35,23 @@ const STATION_DISPLAY_NAMES = {
   ART_ENDFORM_1859: "Tesla 1",
   ART_ENDFORM_1861: "Tesla 2",
   ART_ENDFORM_1862: "Tesla 3"
+};
+const SYNC_STATIONS = [
+  { key: "ART_ENDFORM_1859_LEFT", machine: "Tesla 1", side: "Left", aliases: ["ART_ENDFORM_1859_LEFT", "ART_ENDFORM_1859 - Left", "Tesla 1 - Left"] },
+  { key: "ART_ENDFORM_1859_RIGHT", machine: "Tesla 1", side: "Right", aliases: ["ART_ENDFORM_1859_RIGHT", "ART_ENDFORM_1859 - Right", "Tesla 1 - Right"] },
+  { key: "ART_ENDFORM_1861_LEFT", machine: "Tesla 2", side: "Left", aliases: ["ART_ENDFORM_1861_LEFT", "ART_ENDFORM_1861 - Left", "Tesla 2 - Left"] },
+  { key: "ART_ENDFORM_1861_RIGHT", machine: "Tesla 2", side: "Right", aliases: ["ART_ENDFORM_1861_RIGHT", "ART_ENDFORM_1861 - Right", "Tesla 2 - Right"] },
+  { key: "ART_ENDFORM_1862_LEFT", machine: "Tesla 3", side: "Left", aliases: ["ART_ENDFORM_1862_LEFT", "ART_ENDFORM_1862 - Left", "Tesla 3 - Left"] },
+  { key: "ART_ENDFORM_1862_RIGHT", machine: "Tesla 3", side: "Right", aliases: ["ART_ENDFORM_1862_RIGHT", "ART_ENDFORM_1862 - Right", "Tesla 3 - Right"] }
+];
+
+const EMPTY_SYNC_RUN = {
+  status: "idle",
+  progress: 0,
+  logs: [],
+  startedAt: null,
+  finishedAt: null,
+  summary: "Waiting to start"
 };
 
 function buildQuery(filters, extra = {}) {
@@ -1971,6 +1988,295 @@ function ChangeLogScreen({ entries, onRefresh }) {
   );
 }
 
+function syncTimestamp() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function syncDateTimeLabel(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function syncLogLevel(line) {
+  if (line.includes("[ERROR]")) return "error";
+  if (line.includes("[WARNING]")) return "warning";
+  if (line.includes("terminado") || line.includes("Finalizado OK") || line.includes("Importacion OK")) return "success";
+  return "info";
+}
+
+function syncLogTime(line) {
+  const match = line.match(/^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\]/);
+  return match ? match[2] : syncTimestamp();
+}
+
+function syncLogMessage(line) {
+  return line.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\[[A-Z]+\]\s*/, "");
+}
+
+function syncLineMentionsStation(line, station) {
+  const normalizedLine = String(line || "").toLowerCase();
+  return station.aliases.some((alias) => normalizedLine.includes(alias.toLowerCase()));
+}
+
+function syncStationStates(status, logs) {
+  const running = Boolean(status.running);
+  const finished = Boolean(status.finished_at);
+  const failed = finished && status.return_code !== 0;
+
+  return SYNC_STATIONS.map((station) => {
+    const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
+    const hasSuccess = stationLogs.some((log) => /finalizado ok|importacion ok/i.test(log.line));
+    const hasError = stationLogs.some((log) => log.level === "error" || /error en/i.test(log.line));
+    const state = hasError || (failed && !hasSuccess) ? "error" : hasSuccess ? "success" : running ? "running" : "idle";
+
+    return {
+      ...station,
+      status: state,
+      label: state === "running" ? "Loading" : state === "success" ? "Completed" : state === "error" ? "Failed" : "Pending",
+      lastSync: state === "success" ? status.finished_at || status.started_at : null
+    };
+  });
+}
+
+function syncRunFromStatus(status) {
+  const logs = (status.log_tail || []).map((line, index) => ({
+    id: `${index}-${line}`,
+    time: syncLogTime(line),
+    level: syncLogLevel(line),
+    line: syncLogMessage(line)
+  }));
+  const running = Boolean(status.running);
+  const finished = Boolean(status.finished_at);
+  const succeeded = finished && status.return_code === 0;
+  const failed = finished && status.return_code !== 0;
+  const progress = running ? Math.min(95, Math.max(12, 20 + logs.length * 2)) : finished ? 100 : 0;
+  const summary = running
+    ? "Syncing"
+    : succeeded
+      ? "Sync completed"
+      : failed
+        ? `Sync failed (${status.return_code})`
+        : "Ready to start";
+
+  return {
+    status: running ? "running" : succeeded ? "success" : failed ? "error" : "idle",
+    progress,
+    logs,
+    stations: syncStationStates(status, logs),
+    startedAt: status.started_at,
+    finishedAt: status.finished_at,
+    summary
+  };
+}
+
+function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose }) {
+  const pollRef = useRef(null);
+  const lastHistoryKeyRef = useRef(null);
+  const running = run.status === "running";
+
+  useEffect(() => () => {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchJson("/api/v1/sync-db")
+      .then((status) => {
+        if (cancelled) return;
+        onRunChange(syncRunFromStatus(status));
+        if (status.running) startPolling();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        onRunChange((current) => ({
+          ...current,
+          logs: [
+            ...current.logs,
+            { id: `${Date.now()}-load-error`, time: syncTimestamp(), level: "error", line: error.message }
+          ]
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function refreshStatus() {
+    const status = await fetchJson("/api/v1/sync-db");
+    const nextRun = syncRunFromStatus(status);
+    onRunChange(nextRun);
+
+    if (!status.running && status.finished_at) {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+
+      const historyKey = `${status.started_at}-${status.finished_at}-${status.return_code}`;
+      if (lastHistoryKeyRef.current !== historyKey) {
+        lastHistoryKeyRef.current = historyKey;
+        onHistoryAdd({
+          id: historyKey,
+          status: status.return_code === 0 ? "success" : "error",
+          startedAt: status.started_at,
+          finishedAt: status.finished_at,
+          summary: status.return_code === 0 ? "IE_db sync completed" : `IE_db sync failed (${status.return_code})`,
+          logCount: nextRun.logs.length
+        });
+      }
+    }
+  }
+
+  function startPolling() {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(() => {
+      refreshStatus().catch((error) => {
+        if (pollRef.current) {
+          window.clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+        onRunChange((current) => ({
+          ...current,
+          status: "error",
+          progress: 100,
+          finishedAt: new Date().toISOString(),
+          summary: "Could not read sync status",
+          stations: syncStationStates({ running: false, finished_at: new Date().toISOString(), return_code: 1 }, current.logs),
+          logs: [
+            ...current.logs,
+            { id: `${Date.now()}-status-error`, time: syncTimestamp(), level: "error", line: error.message }
+          ]
+        }));
+      });
+    }, 2000);
+  }
+
+  async function startSync(event) {
+    event.preventDefault();
+
+    onRunChange({
+      status: "running",
+      progress: 5,
+      logs: [{ id: `${Date.now()}-start`, time: syncTimestamp(), level: "info", line: "Solicitando inicio de IE_db.py." }],
+      stations: syncStationStates({ running: true }, []),
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      summary: "Starting IE_db sync"
+    });
+
+    try {
+      const status = await apiRequest("/api/v1/sync-db", { method: "POST" });
+      onRunChange(syncRunFromStatus(status));
+      startPolling();
+    } catch (error) {
+      onRunChange({
+        status: "error",
+        progress: 100,
+        logs: [{ id: `${Date.now()}-start-error`, time: syncTimestamp(), level: "error", line: error.message }],
+        stations: syncStationStates({ running: false, finished_at: new Date().toISOString(), return_code: 1 }, []),
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+        summary: "Could not start sync"
+      });
+    }
+  }
+
+  function resetRun() {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    onRunChange(EMPTY_SYNC_RUN);
+  }
+
+  const latestHistory = history[0];
+  const stationGroups = groupBy(run.stations || syncStationStates({ running: false }, []), "machine");
+
+  return (
+    <div className="remote-sync-dropdown">
+      <div className="remote-sync-panel">
+        <div className="remote-sync-head">
+          <span>Sync</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close sync panel" disabled={running}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <form className="remote-sync-form" onSubmit={startSync}>
+          <button type="submit" className="button-primary" disabled={running}>
+            <RefreshCw size={15} />
+            {running ? "Loading" : "Start Sync"}
+          </button>
+        </form>
+
+        <div className={`remote-sync-status ${run.status}`}>
+          <div className="remote-sync-status-head">
+            <span>{run.summary}</span>
+            <strong>{running ? "Loading" : run.status === "success" ? "Completed" : run.status === "error" ? "Failed" : "Pending"}</strong>
+          </div>
+          <div className="remote-sync-meta">
+            {run.startedAt ? <span>Started: {syncDateTimeLabel(run.startedAt)}</span> : null}
+            {run.finishedAt ? <span>Finished: {syncDateTimeLabel(run.finishedAt)}</span> : null}
+          </div>
+        </div>
+
+        <section className="remote-sync-stations" aria-live="polite">
+          {Object.entries(stationGroups).map(([machine, stations]) => (
+            <div className="remote-sync-machine" key={machine}>
+              <span>{machine}</span>
+              {stations.map((station) => (
+                <div className={`remote-sync-station ${station.status}`} key={station.key}>
+                  <span className="sync-led" />
+                  <div>
+                    <strong>{station.side}</strong>
+                    <small>{station.label}</small>
+                  </div>
+                  <em>{station.lastSync ? `Last: ${syncDateTimeLabel(station.lastSync)}` : "No sync"}</em>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+
+        <details className="remote-sync-history">
+          <summary>
+            <span>History</span>
+            <ChevronDown size={14} />
+          </summary>
+          {latestHistory ? (
+            <div className="remote-sync-history-item">
+              <span className={`remote-sync-history-status ${latestHistory.status}`}>{latestHistory.status}</span>
+              <span>{syncDateTimeLabel(latestHistory.finishedAt || latestHistory.startedAt)}</span>
+              <strong>{latestHistory.summary}</strong>
+              <span>{latestHistory.logCount} logs</span>
+            </div>
+          ) : <div className="empty-option">No history yet.</div>}
+          <div className="remote-sync-console" role="log" aria-live="polite">
+            {run.logs.length ? run.logs.map((log) => (
+              <div className={`remote-sync-log-line ${log.level}`} key={log.id}>
+                <span>{log.time}</span>
+                <p>{log.line}</p>
+              </div>
+            )) : <div className="remote-sync-empty">No logs yet.</div>}
+          </div>
+          {run.status !== "idle" && !running ? (
+            <button type="button" className="small-button" onClick={resetRun}>
+              Reset
+            </button>
+          ) : null}
+        </details>
+      </div>
+    </div>
+  );
+}
+
 function filterDataToStations(data, allowedStations) {
   if (!data) return data;
   const allowed = new Set(allowedStations);
@@ -2006,6 +2312,9 @@ function App() {
   const [showGlidepathManager, setShowGlidepathManager] = useState(false);
   const [changeLogEntries, setChangeLogEntries] = useState([]);
   const [showChangeLogManager, setShowChangeLogManager] = useState(false);
+  const [showRemoteSyncManager, setShowRemoteSyncManager] = useState(false);
+  const [remoteSyncRun, setRemoteSyncRun] = useState(EMPTY_SYNC_RUN);
+  const [remoteSyncHistory, setRemoteSyncHistory] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [showEmployeeManager, setShowEmployeeManager] = useState(false);
@@ -2255,6 +2564,21 @@ function App() {
             <p>{levelTitle}</p>
           </div>
           <div className="actions">
+            <div className="sync-action">
+              <button type="button" className="button-primary" onClick={() => setShowRemoteSyncManager((current) => !current)} title="Remote Sync">
+                <RefreshCw size={17} />
+                Sync
+              </button>
+              {showRemoteSyncManager ? (
+                <RemoteSyncManager
+                  run={remoteSyncRun}
+                  history={remoteSyncHistory}
+                  onRunChange={setRemoteSyncRun}
+                  onHistoryAdd={(item) => setRemoteSyncHistory((current) => [item, ...current])}
+                  onClose={() => setShowRemoteSyncManager(false)}
+                />
+              ) : null}
+            </div>
             <button type="button" className="button-success" onClick={downloadExcel} disabled={!canDownloadExcel} title="Download Excel">
               <Download size={17} />
               {exporting ? "Exporting" : "Excel"}

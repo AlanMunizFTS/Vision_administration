@@ -10,7 +10,23 @@ from app.config import load_env_file
 
 APP_DIR = Path(__file__).resolve().parent
 SYNC_SCRIPT = APP_DIR / "IE_db.py"
-SYNC_LOG = APP_DIR / "sync.log"
+DEFAULT_SYNC_LOG = APP_DIR / "sync.log"
+
+
+def get_sync_log_path():
+    load_env_file()
+    configured_path = os.getenv("SYNC_LOG_PATH")
+    if configured_path:
+        log_path = Path(configured_path)
+        if log_path.is_absolute():
+            return log_path
+        return (APP_DIR.parent / log_path).resolve()
+
+    reports_dir = APP_DIR.parent / "reports"
+    if reports_dir.exists():
+        return reports_dir / "sync.log"
+
+    return DEFAULT_SYNC_LOG
 
 
 def get_sync_config_path():
@@ -44,16 +60,19 @@ class SyncRunner:
             self._finished_at = None
             self._return_code = None
             sync_config = get_sync_config_path()
+            sync_log = get_sync_log_path()
+            sync_log.parent.mkdir(parents=True, exist_ok=True)
             self._process = subprocess.Popen(
                 [
                     sys.executable,
-                    str(SYNC_SCRIPT),
+                    "-m",
+                    "app.IE_db",
                     "--config",
                     str(sync_config),
                     "--work-dir",
                     str(APP_DIR),
                     "--log",
-                    str(SYNC_LOG),
+                    str(sync_log),
                 ],
                 cwd=APP_DIR.parent,
                 stdout=subprocess.DEVNULL,
@@ -70,7 +89,7 @@ class SyncRunner:
                 "started_at": self._format_datetime(self._started_at),
                 "finished_at": self._format_datetime(self._finished_at),
                 "return_code": self._return_code,
-                "log_path": str(SYNC_LOG),
+                "log_path": str(get_sync_log_path()),
                 "log_tail": self._log_tail(),
             }
 
@@ -86,14 +105,21 @@ class SyncRunner:
             self._return_code = return_code
             self._finished_at = datetime.now()
 
-    def _log_tail(self, max_lines=40):
-        if not SYNC_LOG.exists():
+    def _log_tail(self, max_lines=160):
+        sync_log = get_sync_log_path()
+        if not sync_log.exists():
             return []
 
-        with open(SYNC_LOG, "r", encoding="utf-8", errors="replace") as file:
+        with open(sync_log, "r", encoding="utf-8", errors="replace") as file:
             lines = file.readlines()
 
-        return [line.rstrip("\n") for line in lines[-max_lines:]]
+        start_index = 0
+        for index, line in enumerate(lines):
+            if "Iniciando FTS DWH Sync" in line:
+                start_index = index
+
+        latest_run_lines = lines[start_index:]
+        return [line.rstrip("\n") for line in latest_run_lines[-max_lines:]]
 
     @staticmethod
     def _format_datetime(value):

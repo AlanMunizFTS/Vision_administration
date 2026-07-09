@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -38,6 +39,16 @@ def detect_encoding(input_path):
         return "utf-8-sig"
 
     return "utf-8"
+
+
+def tail_text_lines(path, encoding, max_lines=8):
+    try:
+        with open(path, "r", encoding=encoding, errors="replace") as file:
+            lines = file.readlines()
+    except OSError:
+        return []
+
+    return [line.rstrip("\n") for line in lines[-max_lines:]]
 
 
 def setup_logger(log_path):
@@ -98,6 +109,19 @@ def env_int(name, default):
         raise ValueError(f"{name} debe ser un numero entero.") from exc
 
 
+def first_env_value(*names, default=None):
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip():
+            return value.strip()
+    return default
+
+
+def resolve_path(value, default):
+    raw_path = value or default
+    return Path(raw_path).expanduser()
+
+
 def parse_env_stations(raw_stations):
     stations = []
     for raw_station in raw_stations.split(";"):
@@ -135,6 +159,10 @@ def load_config_from_env():
             "add_to_central_script": env_value("SYNC_ADD_TO_CENTRAL_SCRIPT", "add_to_database_central.py"),
             "logs_folder_name": env_value("SYNC_LOGS_FOLDER_NAME", "logs"),
         },
+        "export": {
+            "retries": env_int("SYNC_EXPORT_RETRIES", 2),
+            "retry_delay_seconds": env_int("SYNC_EXPORT_RETRY_DELAY_SECONDS", 5),
+        },
         "retention": {
             "enabled": env_bool("SYNC_RETENTION_ENABLED", True),
             "days": env_int("SYNC_RETENTION_DAYS", 7),
@@ -145,12 +173,24 @@ def load_config_from_env():
             "user": env_value("SYNC_SSH_USER", required=True),
             "batch_mode": env_bool("SYNC_SSH_BATCH_MODE", True),
             "connect_timeout_seconds": env_int("SYNC_SSH_CONNECT_TIMEOUT_SECONDS", 20),
+            "strict_host_key_checking": env_value("SYNC_SSH_STRICT_HOST_KEY_CHECKING"),
+            "user_known_hosts_file": env_value("SYNC_SSH_USER_KNOWN_HOSTS_FILE"),
+            "bootstrap_keys": env_bool("SYNC_SSH_BOOTSTRAP_KEYS", True),
+            "key_type": env_value("SYNC_SSH_KEY_TYPE", "ed25519"),
+            "key_comment": env_value("SYNC_SSH_KEY_COMMENT", "vision-sync"),
+            "key_path": resolve_path(env_value("SYNC_SSH_KEY_PATH"), "~/.ssh/id_ed25519"),
+            "public_key_path": resolve_path(env_value("SYNC_SSH_PUBLIC_KEY_PATH"), "~/.ssh/id_ed25519.pub"),
+            "copy_password": env_value("SYNC_SSH_COPY_PASSWORD"),
+            "authorized_keys_mode": env_value("SYNC_SSH_AUTHORIZED_KEYS_MODE", "windows_admin"),
             "remote_command": env_value("SYNC_SSH_REMOTE_COMMAND", required=True),
         },
         "postgres": {
             "docker_container": env_value("SYNC_POSTGRES_DOCKER_CONTAINER", "postgres-fts"),
+            "host": first_env_value("SYNC_POSTGRES_HOST", "API_DB_HOST"),
+            "port": int(first_env_value("SYNC_POSTGRES_PORT", "API_DB_PORT", default="5432")),
             "database": env_value("SYNC_POSTGRES_DATABASE", os.getenv("DB_NAME", "postgres")),
             "user": env_value("SYNC_POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+            "password": first_env_value("SYNC_POSTGRES_PASSWORD", "DB_PASSWORD"),
             "target_table": env_value("SYNC_POSTGRES_TARGET_TABLE", "model_results_central"),
             "source_station_column": env_value("SYNC_POSTGRES_SOURCE_STATION_COLUMN", "source_station"),
         },
@@ -168,7 +208,6 @@ def require_config(config):
     required_paths = [
         ("ssh", "user"),
         ("ssh", "remote_command"),
-        ("postgres", "docker_container"),
         ("postgres", "database"),
         ("postgres", "user"),
         ("retention", "folder_prefix"),
@@ -178,6 +217,10 @@ def require_config(config):
     for section, key in required_paths:
         if not config.get(section, {}).get(key):
             raise ValueError(f"Falta {section}.{key} en la configuracion de sincronizacion.")
+
+    postgres_config = config.get("postgres", {})
+    if not postgres_config.get("host") and not postgres_config.get("docker_container"):
+        raise ValueError("Falta postgres.host o postgres.docker_container en la configuracion.")
 
     stations = config.get("stations") or []
     if not stations:
@@ -215,25 +258,30 @@ def python_date_format(config_format):
     return result
 
 
-def run_process(args, logger, step_name, stdin_path=None, stdout_path=None):
+def run_process(args, logger, step_name, stdin_path=None, stdout_path=None, stdin_text=None, env=None):
     logger.info("Ejecutando: %s", step_name)
 
     stdin_handle = None
     stdout_handle = None
+    input_data = None
 
     try:
         if stdin_path:
             stdin_handle = open(stdin_path, "rb")
+        elif stdin_text is not None:
+            input_data = stdin_text.encode("utf-8")
         if stdout_path:
             stdout_handle = open(stdout_path, "wb")
 
         process = subprocess.run(
             args,
             stdin=stdin_handle,
+            input=input_data,
             stdout=stdout_handle or subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=False,
             check=False,
+            env=env,
         )
     finally:
         if stdin_handle:
@@ -253,19 +301,96 @@ def run_process(args, logger, step_name, stdin_path=None, stdout_path=None):
         raise RuntimeError(f"{step_name} fallo con ExitCode={process.returncode}")
 
 
-def export_remote_database(station, config, today_dir, logger, ssh_command):
-    output_file = today_dir / station["output_file"]
-    if output_file.exists():
-        output_file.unlink()
+def postgres_command(config, extra_args=None):
+    postgres_config = config["postgres"]
+    extra_args = extra_args or []
 
+    if postgres_config.get("use_direct_client"):
+        return [
+            "psql",
+            "-h",
+            str(postgres_config["host"]),
+            "-p",
+            str(postgres_config.get("port") or 5432),
+            "-U",
+            str(postgres_config["user"]),
+            "-d",
+            str(postgres_config["database"]),
+            *extra_args,
+        ]
+
+    return [
+        "docker",
+        "exec",
+        "-i",
+        str(postgres_config["docker_container"]),
+        "psql",
+        "-U",
+        str(postgres_config["user"]),
+        "-d",
+        str(postgres_config["database"]),
+        *extra_args,
+    ]
+
+
+def select_postgres_mode(config):
+    postgres_config = config["postgres"]
+
+    if postgres_config.get("host") and shutil.which("psql") is not None:
+        postgres_config["use_direct_client"] = True
+        return "psql"
+
+    if postgres_config.get("docker_container") and shutil.which("psql") is not None:
+        postgres_config["host"] = postgres_config["docker_container"]
+        postgres_config["port"] = postgres_config.get("port") or 5432
+        postgres_config["use_direct_client"] = True
+        return "psql"
+
+    if postgres_config.get("docker_container") and shutil.which("docker") is not None:
+        postgres_config["use_direct_client"] = False
+        return "docker"
+
+    if postgres_config.get("host"):
+        raise RuntimeError("No se encontro psql en PATH para conectar a PostgreSQL por host.")
+
+    raise RuntimeError("No se encontro docker en PATH para usar docker exec con PostgreSQL.")
+
+
+def postgres_env(config):
+    password = config.get("postgres", {}).get("password")
+    if not password:
+        return None
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = str(password)
+    return env
+
+
+def build_ssh_args(config, batch_mode=None, include_identity=True):
+    ssh_config = config["ssh"]
     ssh_args = []
 
-    if config["ssh"].get("batch_mode") is True:
+    if batch_mode is None:
+        batch_mode = ssh_config.get("batch_mode") is True
+
+    if batch_mode is True:
         ssh_args.extend(["-o", "BatchMode=yes"])
 
-    connect_timeout = config["ssh"].get("connect_timeout_seconds")
+    connect_timeout = ssh_config.get("connect_timeout_seconds")
     if connect_timeout:
         ssh_args.extend(["-o", f"ConnectTimeout={int(connect_timeout)}"])
+
+    strict_host_key_checking = ssh_config.get("strict_host_key_checking")
+    if strict_host_key_checking:
+        ssh_args.extend(["-o", f"StrictHostKeyChecking={strict_host_key_checking}"])
+
+    user_known_hosts_file = ssh_config.get("user_known_hosts_file")
+    if user_known_hosts_file:
+        ssh_args.extend(["-o", f"UserKnownHostsFile={user_known_hosts_file}"])
+
+    key_path = ssh_config.get("key_path")
+    if include_identity and key_path and Path(key_path).exists():
+        ssh_args.extend(["-i", str(key_path), "-o", "IdentitiesOnly=yes"])
 
     ssh_args.extend(
         [
@@ -275,8 +400,184 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
             "ServerAliveCountMax=6",
         ]
     )
+    return ssh_args
 
-    ssh_target = f"{config['ssh']['user']}@{station['ip']}"
+
+def ssh_target_for_station(station, config):
+    return f"{config['ssh']['user']}@{station['ip']}"
+
+
+def ensure_local_ssh_key(config, logger):
+    ssh_config = config["ssh"]
+    key_path = Path(ssh_config["key_path"])
+    public_key_path = Path(ssh_config["public_key_path"])
+
+    if key_path.exists() and public_key_path.exists():
+        logger.info("Llave SSH local existente: %s", key_path)
+        return
+
+    resolve_command("ssh-keygen")
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Generando llave SSH local: %s", key_path)
+    run_process(
+        [
+            "ssh-keygen",
+            "-t",
+            str(ssh_config.get("key_type") or "ed25519"),
+            "-f",
+            str(key_path),
+            "-N",
+            "",
+            "-C",
+            str(ssh_config.get("key_comment") or "vision-sync"),
+        ],
+        logger,
+        "Generacion de llave SSH local",
+    )
+
+
+def station_ssh_available(station, config, ssh_command, logger):
+    ssh_target = ssh_target_for_station(station, config)
+    process = subprocess.run(
+        [ssh_command, *build_ssh_args(config, batch_mode=True), ssh_target, "echo ok"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if process.returncode == 0:
+        logger.info("Acceso SSH OK para %s", station["name"])
+        return True
+
+    stderr_text = (process.stderr or "").strip()
+    if stderr_text:
+        logger.warning("Acceso SSH pendiente para %s: %s", station["name"], stderr_text)
+    return False
+
+
+def sshpass_command(config, ssh_command):
+    password = config["ssh"].get("copy_password")
+    if not password:
+        return None, None
+
+    sshpass = shutil.which("sshpass")
+    if sshpass:
+        env = os.environ.copy()
+        env["SSHPASS"] = str(password)
+        return [sshpass, "-e", ssh_command], env
+
+    return None, None
+
+
+def remote_authorized_key_command(config):
+    mode = str(config["ssh"].get("authorized_keys_mode") or "windows_admin").lower()
+    if mode in {"linux", "linux_user", "jetson"}:
+        return (
+            "sh -lc 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; "
+            "key=$(cat); grep -qxF \"$key\" ~/.ssh/authorized_keys || printf \"%s\\n\" \"$key\" >> ~/.ssh/authorized_keys; "
+            "chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys'"
+        )
+
+    if mode in {"windows_user", "user"}:
+        return (
+            "powershell -NoProfile -Command "
+            "\"$key = ([Console]::In.ReadToEnd()).Trim(); "
+            "$dir = Join-Path $env:USERPROFILE '.ssh'; "
+            "$file = Join-Path $dir 'authorized_keys'; "
+            "New-Item -ItemType Directory -Path $dir -Force | Out-Null; "
+            "if (!(Test-Path $file) -or -not (Select-String -Path $file -SimpleMatch $key -Quiet)) { Add-Content -Path $file -Value $key }\""
+        )
+
+    return (
+        "powershell -NoProfile -Command "
+        "\"$key = ([Console]::In.ReadToEnd()).Trim(); "
+        "$file = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'; "
+        "New-Item -ItemType Directory -Path (Split-Path $file) -Force | Out-Null; "
+        "if (!(Test-Path $file) -or -not (Select-String -Path $file -SimpleMatch $key -Quiet)) { Add-Content -Path $file -Value $key }; "
+        "icacls $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F'\""
+    )
+
+
+def install_station_ssh_key(station, config, ssh_command, logger):
+    public_key_path = Path(config["ssh"]["public_key_path"])
+    public_key = public_key_path.read_text(encoding="utf-8").strip()
+    sshpass_args, sshpass_env = sshpass_command(config, ssh_command)
+    if not sshpass_args:
+        logger.warning(
+            "No se puede instalar la llave automaticamente para %s: falta SYNC_SSH_COPY_PASSWORD o sshpass.",
+            station["name"],
+        )
+        return False
+
+    ssh_target = ssh_target_for_station(station, config)
+    logger.info("Instalando llave SSH en %s", station["name"])
+    run_process(
+        [
+            *sshpass_args,
+            *build_ssh_args(config, batch_mode=False, include_identity=False),
+            ssh_target,
+            remote_authorized_key_command(config),
+        ],
+        logger,
+        f"Instalacion de llave SSH en {station['name']}",
+        stdin_text=f"{public_key}\n",
+        env=sshpass_env,
+    )
+    return True
+
+
+def ensure_station_ssh_access(station, config, ssh_command, logger):
+    if not config["ssh"].get("bootstrap_keys"):
+        return
+
+    ensure_local_ssh_key(config, logger)
+    if station_ssh_available(station, config, ssh_command, logger):
+        return
+
+    try:
+        if install_station_ssh_key(station, config, ssh_command, logger):
+            station_ssh_available(station, config, ssh_command, logger)
+    except Exception as exc:
+        logger.warning("No se pudo preparar llave SSH para %s: %s", station["name"], exc)
+
+
+def model_results_copy_is_complete(input_path):
+    encoding = detect_encoding(input_path)
+    found_copy = False
+
+    with open(input_path, "r", encoding=encoding, errors="replace") as file:
+        for line in file:
+            clean_line = line.lstrip("\ufeff")
+            if clean_line.startswith("COPY public.model_results"):
+                found_copy = True
+                break
+
+        if not found_copy:
+            return False, "No se encontro COPY public.model_results en el SQL."
+
+        for line in file:
+            if line.strip() == r"\.":
+                return True, None
+
+    file_size = input_path.stat().st_size if input_path.exists() else 0
+    tail_lines = tail_text_lines(input_path, encoding)
+    tail_preview = " | ".join(tail_lines) if tail_lines else "<sin lineas>"
+    return (
+        False,
+        "No se encontro el cierre del COPY: \\. "
+        f"El dump puede estar incompleto o truncado. Archivo={input_path}, "
+        f"tamano={file_size} bytes, ultimas_lineas={tail_preview}",
+    )
+
+
+def export_remote_database_once(station, config, today_dir, logger, ssh_command):
+    output_file = today_dir / station["output_file"]
+    if output_file.exists():
+        output_file.unlink()
+
+    ssh_args = build_ssh_args(config)
+
+    ssh_target = ssh_target_for_station(station, config)
     remote_command = str(config["ssh"]["remote_command"])
 
     logger.info("Exportando %s desde %s hacia %s", station["name"], ssh_target, output_file)
@@ -299,7 +600,34 @@ def export_remote_database(station, config, today_dir, logger, ssh_command):
         station["name"],
         file_size / 1024 / 1024,
     )
+    complete, issue = model_results_copy_is_complete(output_file)
+    if not complete:
+        raise RuntimeError(issue)
+
     return output_file
+
+
+def export_remote_database(station, config, today_dir, logger, ssh_command):
+    retries = max(0, int(config.get("export", {}).get("retries", 0)))
+    delay_seconds = max(0, int(config.get("export", {}).get("retry_delay_seconds", 0)))
+    attempts = retries + 1
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if attempt > 1:
+                logger.info("Reintentando exportacion de %s (%s/%s)", station["name"], attempt, attempts)
+            return export_remote_database_once(station, config, today_dir, logger, ssh_command)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning("Exportacion de %s fallo en intento %s/%s: %s", station["name"], attempt, attempts, exc)
+            if delay_seconds:
+                logger.info("Esperando %s segundos antes de reintentar %s", delay_seconds, station["name"])
+                time.sleep(delay_seconds)
+
+    raise last_error
 
 
 def write_centralized_sql(input_path, source_station, output_path, logger):
@@ -358,7 +686,14 @@ CREATE TEMP TABLE tmp_model_results (
 
             if not finished_copy:
                 dst.write("ROLLBACK;\n")
-                raise RuntimeError("No se encontro el cierre del COPY: \\.")
+                file_size = input_path.stat().st_size if input_path.exists() else 0
+                tail_lines = tail_text_lines(input_path, encoding)
+                tail_preview = " | ".join(tail_lines) if tail_lines else "<sin lineas>"
+                raise RuntimeError(
+                    "No se encontro el cierre del COPY: \\. "
+                    f"El dump puede estar incompleto o truncado. Archivo={input_path}, "
+                    f"tamano={file_size} bytes, ultimas_lineas={tail_preview}"
+                )
 
             dst.write(
                 f"""
@@ -405,22 +740,11 @@ def import_to_central_database(station, input_file, config, temp_dir, logger):
 
     logger.info("Importando %s hacia PostgreSQL central", station["name"])
     run_process(
-        [
-            "docker",
-            "exec",
-            "-i",
-            str(config["postgres"]["docker_container"]),
-            "psql",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            str(config["postgres"]["user"]),
-            "-d",
-            str(config["postgres"]["database"]),
-        ],
+        postgres_command(config, ["-v", "ON_ERROR_STOP=1"]),
         logger,
         f"Importacion PostgreSQL de {station['name']}",
         stdin_path=transform_sql,
+        env=postgres_env(config),
     )
 
     logger.info("Importacion OK de %s", station["name"])
@@ -437,44 +761,28 @@ def show_central_counts(config, logger):
 
     logger.info("Conteo total en %s", target_table)
     run_process(
-        [
-            "docker",
-            "exec",
-            "-i",
-            str(config["postgres"]["docker_container"]),
-            "psql",
-            "-U",
-            str(config["postgres"]["user"]),
-            "-d",
-            str(config["postgres"]["database"]),
-            "-c",
-            f"SELECT COUNT(*) AS total_central FROM {target_table};",
-        ],
+        postgres_command(config, ["-c", f"SELECT COUNT(*) AS total_central FROM {target_table};"]),
         logger,
         "Conteo total",
+        env=postgres_env(config),
     )
 
     if source_column:
         logger.info("Conteo por %s en %s", source_column, target_table)
         run_process(
-            [
-                "docker",
-                "exec",
-                "-i",
-                str(config["postgres"]["docker_container"]),
-                "psql",
-                "-U",
-                str(config["postgres"]["user"]),
-                "-d",
-                str(config["postgres"]["database"]),
-                "-c",
-                (
-                    f"SELECT {source_column}, COUNT(*) AS total "
-                    f"FROM {target_table} GROUP BY {source_column} ORDER BY {source_column};"
-                ),
-            ],
+            postgres_command(
+                config,
+                [
+                    "-c",
+                    (
+                        f"SELECT {source_column}, COUNT(*) AS total "
+                        f"FROM {target_table} GROUP BY {source_column} ORDER BY {source_column};"
+                    ),
+                ],
+            ),
             logger,
             "Conteo por estacion",
+            env=postgres_env(config),
         )
 
 
@@ -555,7 +863,8 @@ def main():
         require_config(config)
 
         ssh_command = resolve_command("ssh.exe", "ssh")
-        resolve_command("docker")
+        postgres_mode = select_postgres_mode(config)
+        logger.info("Modo PostgreSQL: %s", postgres_mode)
 
         folder_prefix = str(config["retention"]["folder_prefix"])
         date_format = python_date_format(str(config["retention"]["date_format"]))
@@ -584,6 +893,7 @@ def main():
                 logger.info("------------------------------------------------------------")
                 logger.info("Procesando estacion: %s", station["name"])
 
+                ensure_station_ssh_access(station, config, ssh_command, logger)
                 sql_file = export_remote_database(station, config, today_dir, logger, ssh_command)
                 import_to_central_database(station, sql_file, config, temp_dir, logger)
 
