@@ -30,6 +30,7 @@ const COLORS = ["#2f6f9f", "#c9564a", "#6f8f3f", "#d39b32", "#7259a4", "#3f8f88"
 const PART_NUMBER_BAND_COLORS = ["#c7d2fe", "#bbf7d0", "#fde68a", "#fbcfe8", "#bfdbfe", "#fecaca", "#ddd6fe", "#a7f3d0"];
 const MACHINE_ALL = "__all__";
 const CHANGE_LOG_CATEGORIES = ["Lots", "Burger", "Chamfer", "RPMs", "Infeed Advance", "Outfeed Advance", "Other"];
+const CHANGE_LOG_DESCRIPTION_MIN_LENGTH = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATION_DISPLAY_NAMES = {
   ART_ENDFORM_1859: "Tesla 1",
@@ -1509,6 +1510,17 @@ function employeeDisplay(employee) {
   return employee.employee_number ? `${employee.employee_number} - ${employee.full_name}` : employee.full_name;
 }
 
+function changeLogDescriptionError(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Description is required.";
+  if (trimmed.length < CHANGE_LOG_DESCRIPTION_MIN_LENGTH) return `Description must have at least ${CHANGE_LOG_DESCRIPTION_MIN_LENGTH} non-space characters.`;
+  return "";
+}
+
+function syncChangeLogDescriptionValidation(input) {
+  input.setCustomValidity(changeLogDescriptionError(input.value));
+}
+
 function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ? String(employees[0].id) : "");
@@ -1520,18 +1532,6 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const isOther = category === "Other";
-  const descriptionMinLength = 20;
-
-  function descriptionError(value) {
-    const trimmed = value.trim();
-    if (!trimmed) return "Description is required.";
-    if (trimmed.length < descriptionMinLength) return `Description must have at least ${descriptionMinLength} non-space characters.`;
-    return "";
-  }
-
-  function syncDescriptionValidation(input) {
-    input.setCustomValidity(descriptionError(input.value));
-  }
 
   useEffect(() => {
     if (!stationPair && pairOptions.length) {
@@ -1550,7 +1550,7 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
     if (!stationPair || !changeDate || !employeeId) return;
     if (isOther && !label.trim()) return;
     const descriptionInput = event.currentTarget.elements.description;
-    syncDescriptionValidation(descriptionInput);
+    syncChangeLogDescriptionValidation(descriptionInput);
     if (!event.currentTarget.reportValidity()) return;
     setSaving(true);
     try {
@@ -1674,9 +1674,9 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
           onChange={(e) => {
             onSuccessMessageClear();
             setDescription(e.target.value);
-            syncDescriptionValidation(e.target);
+            syncChangeLogDescriptionValidation(e.target);
           }}
-          onInvalid={(e) => syncDescriptionValidation(e.target)}
+          onInvalid={(e) => syncChangeLogDescriptionValidation(e.target)}
           required
         />
       </label>
@@ -1684,6 +1684,146 @@ function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoa
         <Plus size={15} /> Log Change
       </button>
     </form>
+  );
+}
+
+function ChangeLogEntryModal({ entry, pairOptions, optionsLoading, employees, employeesLoading, onClose, onRefresh }) {
+  const pairChoices = pairOptions.includes(entry.station_pair) ? pairOptions : [entry.station_pair, ...pairOptions].filter(Boolean);
+  const currentEmployeeId = entry.employee_id ? String(entry.employee_id) : "";
+  const employeeChoices = currentEmployeeId && !employees.some((employee) => String(employee.id) === currentEmployeeId)
+    ? [{ id: entry.employee_id, employee_number: entry.employee_number, full_name: entry.employee_name || "Current employee" }, ...employees]
+    : employees;
+  const [stationPair, setStationPair] = useState(entry.station_pair || "");
+  const [employeeId, setEmployeeId] = useState(currentEmployeeId);
+  const [side, setSide] = useState(entry.side || "both");
+  const [changeDate, setChangeDate] = useState(entry.change_date || "");
+  const [changeTime, setChangeTime] = useState(entry.change_time ? entry.change_time.slice(0, 5) : "");
+  const [category, setCategory] = useState(entry.category || CHANGE_LOG_CATEGORIES[0]);
+  const [label, setLabel] = useState(entry.category === "Other" ? entry.label || "" : "");
+  const [description, setDescription] = useState(entry.description || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const isOther = category === "Other";
+
+  async function saveEntry(event) {
+    event.preventDefault();
+    if (!stationPair || !changeDate) return;
+    if (isOther && !label.trim()) return;
+    const descriptionInput = event.currentTarget.elements.description;
+    syncChangeLogDescriptionValidation(descriptionInput);
+    if (!event.currentTarget.reportValidity()) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/change-log/${entry.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          station_pair: stationPair,
+          side,
+          change_date: changeDate,
+          change_time: changeTime || null,
+          employee_id: employeeId ? Number(employeeId) : null,
+          category,
+          label: isOther ? label.trim() : null,
+          description: description.trim()
+        })
+      });
+      await onRefresh();
+      onClose();
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>Edit Change</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        {error ? <div className="error add-log-loading">{error}</div> : null}
+
+        <form className="new-change-log-form" onSubmit={saveEntry}>
+          <div className="subproject-field-row">
+            <label>
+              Machine
+              <select value={stationPair} onChange={(event) => setStationPair(event.target.value)} disabled={optionsLoading || !pairChoices.length} required>
+                {pairChoices.map((pair) => (
+                  <option key={pair} value={pair}>{stationPairName(pair)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Employee
+              <select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} disabled={employeesLoading}>
+                <option value="">Unassigned</option>
+                {employeeChoices.map((employee) => (
+                  <option key={employee.id} value={employee.id}>{employeeDisplay(employee)}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="subproject-field-row">
+            <label>
+              Side
+              <select value={side} onChange={(event) => setSide(event.target.value)}>
+                <option value="both">Both</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+            <label>
+              Date
+              <input type="date" value={changeDate} onChange={(event) => setChangeDate(event.target.value)} required />
+            </label>
+          </div>
+          <div className="subproject-field-row">
+            <label>
+              Time (optional)
+              <input type="time" value={changeTime} onChange={(event) => setChangeTime(event.target.value)} />
+            </label>
+            <label>
+              Category
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                {CHANGE_LOG_CATEGORIES.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {isOther ? (
+            <label>
+              Label
+              <input type="text" placeholder="e.g. Fixture swap" value={label} onChange={(event) => setLabel(event.target.value)} required />
+            </label>
+          ) : null}
+          <label>
+            Description
+            <input
+              type="text"
+              name="description"
+              placeholder="Details, work order, etc."
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value);
+                syncChangeLogDescriptionValidation(event.target);
+              }}
+              onInvalid={(event) => syncChangeLogDescriptionValidation(event.target)}
+              required
+            />
+          </label>
+          <button type="submit" className="button-primary" disabled={saving || optionsLoading || employeesLoading || !pairChoices.length}>
+            <Pencil size={15} /> Save Change
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -1922,10 +2062,18 @@ function EmployeeScreen({ employees, loading, onOpenCreate, onOpenEdit, onRefres
   );
 }
 
-function ChangeLogScreen({ entries, onRefresh }) {
+function ChangeLogScreen({ entries, pairOptions, optionsLoading, employees, employeesLoading, onRefresh }) {
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [error, setError] = useState("");
+
   async function deleteEntry(entryId) {
-    await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
-    onRefresh();
+    setError("");
+    try {
+      await apiRequest(`/api/v1/change-log/${entryId}`, { method: "DELETE" });
+      onRefresh();
+    } catch (exc) {
+      setError(exc.message);
+    }
   }
 
   const sortedEntries = [...entries].sort((a, b) => {
@@ -1943,6 +2091,20 @@ function ChangeLogScreen({ entries, onRefresh }) {
           <p>Process change log</p>
         </div>
       </header>
+
+      {editingEntry ? (
+        <ChangeLogEntryModal
+          entry={editingEntry}
+          pairOptions={pairOptions}
+          optionsLoading={optionsLoading}
+          employees={employees}
+          employeesLoading={employeesLoading}
+          onClose={() => setEditingEntry(null)}
+          onRefresh={onRefresh}
+        />
+      ) : null}
+
+      {error ? <div className="error">{error}</div> : null}
 
       <section className="change-log-screen">
         <table className="change-log-table">
@@ -1969,6 +2131,9 @@ function ChangeLogScreen({ entries, onRefresh }) {
                 <td className="change-log-row-label">{entry.category === "Other" ? entry.label : ""}</td>
                 <td className="change-log-row-desc">{entry.description || "No description"}</td>
                 <td className="change-log-row-actions">
+                  <button type="button" className="icon-button" onClick={() => setEditingEntry(entry)} aria-label="Edit entry">
+                    <Pencil size={14} />
+                  </button>
                   <button type="button" className="icon-button" onClick={() => deleteEntry(entry.id)} aria-label="Delete entry">
                     <Trash2 size={14} />
                   </button>
@@ -2538,7 +2703,14 @@ function App() {
       ) : null}
       <main>
         {activeScreen === "changes" ? (
-          <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
+          <ChangeLogScreen
+            entries={changeLogEntries}
+            pairOptions={stationPairOptions(options)}
+            optionsLoading={optionsLoading}
+            employees={employees}
+            employeesLoading={employeesLoading}
+            onRefresh={reloadChangeLog}
+          />
         ) : activeScreen === "employees" ? (
           <EmployeeScreen
             employees={employees}
