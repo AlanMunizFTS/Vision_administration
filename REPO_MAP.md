@@ -4,7 +4,7 @@ Quick map of the `Vision_administration` repository.
 
 ## Purpose
 
-Local dashboard and API for analyzing vision results from `public.model_results_central`, exporting Excel reports, managing glidepaths, tracking process changes, and associating logs with employees.
+Local dashboard and API for analyzing vision results from `public.model_results_central`, exporting Excel reports, managing glidepaths, tracking process changes, recording scrap, and associating logs with employees.
 
 ## Root
 
@@ -23,10 +23,11 @@ Local dashboard and API for analyzing vision results from `public.model_results_
 - `app/reports.py`: SQL queries and aggregations for results, pieces, defects, time series, and reject summary.
 - `app/glidepath.py`: auxiliary tables and CRUD for glidepath projects, subprojects, and milestones.
 - `app/change_log.py`: auxiliary tables and CRUD for employees and process change events.
+- `app/scrap.py`: auxiliary table and CRUD for machine scrap entries.
 
 ## Frontend
 
-- `frontend/src/main.jsx`: complete React app with filters, Overall/Machine/Head views, charts, glidepaths, employee management, change log, and Excel export.
+- `frontend/src/main.jsx`: complete React app with filters, Overall/Machine/Head views, charts, glidepaths, employee management, change log, scrap entry management, and Excel export.
 - `frontend/src/styles.css`: dashboard styles.
 - `frontend/package.json`: Vite scripts (`dev`, `build`, `preview`) and React/Recharts/Lucide dependencies.
 - `frontend/vite.config.js`: local `/api` proxy to `http://127.0.0.1:8000`.

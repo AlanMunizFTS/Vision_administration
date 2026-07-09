@@ -1,6 +1,6 @@
 # Vision Administration
 
-Local API and dashboard for querying reports from `public.model_results_central`, managing glidepaths, and tracking process changes.
+Local API and dashboard for querying reports from `public.model_results_central`, managing glidepaths, tracking process changes, and recording scrap.
 
 ## Run With Docker
 
@@ -47,7 +47,7 @@ API Docs:  http://127.0.0.1:8000/docs
 Postgres:  127.0.0.1:5433
 ```
 
-The dashboard lets you review the whole plant, combined LEFT+RIGHT machines, or individual heads. It includes filters for date, machine, and `part_number`, day-by-day charts, per-condition defects, top 3 history, glidepath targets, process-change markers, and Excel export.
+The dashboard lets you review the whole plant, combined LEFT+RIGHT machines, or individual heads. It includes filters for date, machine, and `part_number`, day-by-day charts, per-condition defects, top 3 history, glidepath targets, process-change markers, scrap entry management, and Excel export.
 
 The services stay up while `docker compose` is running. To stop them, press `Ctrl+C`; if you started them in the background with `-d`, use:
 
@@ -157,9 +157,14 @@ El backend expone `POST /api/v1/sync-db` para iniciar la sincronizacion y `GET /
 - `POST /api/v1/change-log`
 - `PATCH /api/v1/change-log/{entry_id}`
 - `DELETE /api/v1/change-log/{entry_id}`
+- `GET /api/v1/scrap`
+- `POST /api/v1/scrap`
+- `PATCH /api/v1/scrap/{entry_id}`
+- `DELETE /api/v1/scrap/{entry_id}`
 
-Note: report endpoints read from `public.model_results_central`; glidepath, employee, and change-log endpoints create their own auxiliary tables to store projects, targets, employees, and change events.
+Note: report endpoints read from `public.model_results_central`; glidepath, employee, change-log, and scrap endpoints create their own auxiliary tables to store projects, targets, employees, change events, and scrap entries.
 Employee records require `full_name`; `employee_number` is optional.
+Scrap records require machine, date, whole hour, and a positive integer quantity.
 
 ## Rules
 
