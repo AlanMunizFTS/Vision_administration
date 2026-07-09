@@ -778,6 +778,23 @@ button:focus-visible {
   gap: 4px;
 }
 
+.form-spacer {
+  display: block;
+}
+
+.employee-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.employee-form label {
+  gap: 4px;
+}
+
 .change-log-screen {
   display: flex;
   flex-direction: column;
@@ -785,9 +802,67 @@ button:focus-visible {
   overflow-x: auto;
 }
 
+.employee-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: auto;
+}
+
+.employee-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: separate;
+  border-spacing: 0 5px;
+}
+
+.employee-table th {
+  padding: 0 10px 6px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.employee-table-row td {
+  padding: 9px 10px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.employee-table-row td:first-child {
+  border-left: 1px solid var(--border);
+  border-radius: 6px 0 0 6px;
+}
+
+.employee-table-row td:last-child {
+  border-right: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+}
+
+.employee-table-number {
+  width: 180px;
+  color: var(--accent-soft-text);
+  font-weight: 750;
+}
+
+.employee-table-name {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.employee-table-actions {
+  width: 92px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .change-log-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 980px;
   border-collapse: separate;
   border-spacing: 0 5px;
 }
@@ -835,6 +910,12 @@ button:focus-visible {
   text-transform: capitalize;
   color: var(--text-faint);
   min-width: 44px;
+}
+
+.change-log-row-employee {
+  color: var(--text-muted);
+  font-weight: 650;
+  min-width: 150px;
 }
 
 .change-log-row-category {

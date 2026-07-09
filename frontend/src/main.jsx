@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, ChevronDown, Download, Flag, Layers, ListChecks, Pencil, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
 import "./styles.css";
 
 const TABS = [
@@ -1101,6 +1101,7 @@ function Sidebar({
   loading,
   onOpenGlidepath,
   onOpenChangeLog,
+  onOpenEmployees,
   onOpenChanges
 }) {
   const [machineOpen, setMachineOpen] = useState(true);
@@ -1189,6 +1190,9 @@ function Sidebar({
         </button>
         <button type="button" className="nav-item" onClick={onOpenChangeLog}>
           <span className="nav-item-label"><Calendar size={15} /> Add Log</span>
+        </button>
+        <button type="button" className={`nav-item ${activeScreen === "employees" ? "active" : ""}`} onClick={onOpenEmployees}>
+          <span className="nav-item-label"><Users size={15} /> Employees</span>
         </button>
         <button type="button" className={`nav-item ${activeScreen === "changes" ? "active" : ""}`} onClick={onOpenChanges}>
           <span className="nav-item-label"><ListChecks size={15} /> Changes</span>
@@ -1500,8 +1504,14 @@ function GlidepathManager({ projects, pairOptions, onClose, onRefresh }) {
   );
 }
 
-function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMessageClear }) {
+function employeeDisplay(employee) {
+  if (!employee) return "";
+  return `${employee.employee_number} - ${employee.full_name}`;
+}
+
+function NewChangeLogForm({ pairOptions, optionsLoading, employees, employeesLoading, onCreate, onSuccessMessageClear }) {
   const [stationPair, setStationPair] = useState(pairOptions[0] || "");
+  const [employeeId, setEmployeeId] = useState(employees[0]?.id ? String(employees[0].id) : "");
   const [side, setSide] = useState("both");
   const [changeDate, setChangeDate] = useState("");
   const [changeTime, setChangeTime] = useState("");
@@ -1529,9 +1539,15 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
     }
   }, [pairOptions, stationPair]);
 
+  useEffect(() => {
+    if (!employeeId && employees.length) {
+      setEmployeeId(String(employees[0].id));
+    }
+  }, [employees, employeeId]);
+
   async function submit(event) {
     event.preventDefault();
-    if (!stationPair || !changeDate) return;
+    if (!stationPair || !changeDate || !employeeId) return;
     if (isOther && !label.trim()) return;
     const descriptionInput = event.currentTarget.elements.description;
     syncDescriptionValidation(descriptionInput);
@@ -1543,6 +1559,7 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
         side,
         change_date: changeDate,
         change_time: changeTime || null,
+        employee_id: Number(employeeId),
         category,
         label: isOther ? label.trim() : null,
         description: description.trim()
@@ -1575,6 +1592,24 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
           </select>
         </label>
         <label>
+          Employee
+          <select
+            value={employeeId}
+            onChange={(e) => {
+              onSuccessMessageClear();
+              setEmployeeId(e.target.value);
+            }}
+            disabled={employeesLoading || !employees.length}
+            required
+          >
+            {employees.map((employee) => (
+              <option key={employee.id} value={employee.id}>{employeeDisplay(employee)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="subproject-field-row">
+        <label>
           Side
           <select value={side} onChange={(e) => {
             onSuccessMessageClear();
@@ -1585,8 +1620,6 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
             <option value="right">Right</option>
           </select>
         </label>
-      </div>
-      <div className="subproject-field-row">
         <label>
           Date
           <input type="date" value={changeDate} onChange={(e) => {
@@ -1594,6 +1627,8 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
             setChangeDate(e.target.value);
           }} required />
         </label>
+      </div>
+      <div className="subproject-field-row">
         <label>
           Time (optional)
           <input type="time" value={changeTime} onChange={(e) => {
@@ -1601,6 +1636,7 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
             setChangeTime(e.target.value);
           }} />
         </label>
+        <span className="form-spacer" aria-hidden="true" />
       </div>
       <label>
         Category
@@ -1644,14 +1680,14 @@ function NewChangeLogForm({ pairOptions, optionsLoading, onCreate, onSuccessMess
           required
         />
       </label>
-      <button type="submit" className="button-primary" disabled={saving || optionsLoading || !pairOptions.length}>
+      <button type="submit" className="button-primary" disabled={saving || optionsLoading || employeesLoading || !pairOptions.length || !employees.length}>
         <Plus size={15} /> Log Change
       </button>
     </form>
   );
 }
 
-function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
+function ChangeLogManager({ pairOptions, optionsLoading, employees, employeesLoading, onClose, onRefresh }) {
   const [successMessage, setSuccessMessage] = useState("");
 
   async function createEntry(payload) {
@@ -1671,16 +1707,220 @@ function ChangeLogManager({ pairOptions, optionsLoading, onClose, onRefresh }) {
         </div>
 
         {optionsLoading ? <div className="loading add-log-loading">Loading machines...</div> : null}
+        {employeesLoading ? <div className="loading add-log-loading">Loading employees...</div> : null}
+        {!employeesLoading && !employees.length ? <div className="error add-log-loading">Add an employee before creating a log.</div> : null}
         {successMessage ? <div className="success add-log-success">{successMessage}</div> : null}
 
         <NewChangeLogForm
           pairOptions={pairOptions}
           optionsLoading={optionsLoading}
+          employees={employees}
+          employeesLoading={employeesLoading}
           onCreate={createEntry}
           onSuccessMessageClear={() => setSuccessMessage("")}
         />
       </div>
     </div>
+  );
+}
+
+function AddEmployeeModal({ employee, onClose, onRefresh }) {
+  const isEditing = Boolean(employee);
+  const [employeeNumber, setEmployeeNumber] = useState(employee?.employee_number || "");
+  const [fullName, setFullName] = useState(employee?.full_name || "");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  function employeeNumberError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Employee number is required.";
+    if (trimmed.length > 10) return "Employee number must be 10 characters or fewer.";
+    return "";
+  }
+
+  function fullNameError(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return "Full name is required.";
+    if (trimmed.length > 50) return "Full name must be 50 characters or fewer.";
+    return "";
+  }
+
+  function syncEmployeeNumberValidation(input) {
+    input.setCustomValidity(employeeNumberError(input.value));
+  }
+
+  function syncFullNameValidation(input) {
+    input.setCustomValidity(fullNameError(input.value));
+  }
+
+  async function createEmployee(event) {
+    event.preventDefault();
+    const employeeNumberInput = event.currentTarget.elements.employee_number;
+    const fullNameInput = event.currentTarget.elements.full_name;
+    syncEmployeeNumberValidation(employeeNumberInput);
+    syncFullNameValidation(fullNameInput);
+    if (!event.currentTarget.reportValidity()) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(isEditing ? `/api/v1/employees/${employee.id}` : "/api/v1/employees", {
+        method: isEditing ? "PATCH" : "POST",
+        body: JSON.stringify({
+          employee_number: employeeNumber.trim(),
+          full_name: fullName.trim()
+        })
+      });
+      onRefresh();
+      if (isEditing) {
+        onClose();
+      } else {
+        setEmployeeNumber("");
+        setFullName("");
+        setMessage("Employee added.");
+      }
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="multi-select-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="glidepath-modal">
+        <div className="multi-select-modal-head">
+          <span>{isEditing ? "Edit Employee" : "Add Employee"}</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        {error ? <div className="error add-log-loading">{error}</div> : null}
+        {message ? <div className="success add-log-success">{message}</div> : null}
+
+        <form className="employee-form" onSubmit={createEmployee}>
+          <div className="subproject-field-row">
+            <label>
+              Employee number
+              <input
+                type="text"
+                name="employee_number"
+                value={employeeNumber}
+                maxLength={10}
+                onChange={(event) => {
+                  setEmployeeNumber(event.target.value);
+                  setError("");
+                  setMessage("");
+                  syncEmployeeNumberValidation(event.target);
+                }}
+                onInvalid={(event) => syncEmployeeNumberValidation(event.target)}
+                required
+              />
+            </label>
+            <label>
+              Full name
+              <input
+                type="text"
+                name="full_name"
+                value={fullName}
+                maxLength={50}
+                onChange={(event) => {
+                  setFullName(event.target.value);
+                  setError("");
+                  setMessage("");
+                  syncFullNameValidation(event.target);
+                }}
+                onInvalid={(event) => syncFullNameValidation(event.target)}
+                required
+              />
+            </label>
+          </div>
+          <button type="submit" className="button-primary" disabled={saving}>
+            {isEditing ? <Pencil size={15} /> : <UserPlus size={15} />}
+            {isEditing ? "Save Employee" : "Add Employee"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeScreen({ employees, loading, onOpenCreate, onOpenEdit, onRefresh }) {
+  const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState(null);
+  const sortedEmployees = [...employees].sort((a, b) => {
+    const nameCompare = String(a.full_name || "").localeCompare(String(b.full_name || ""));
+    if (nameCompare !== 0) return nameCompare;
+    return String(a.employee_number || "").localeCompare(String(b.employee_number || ""));
+  });
+
+  async function deleteEmployee(employee) {
+    const confirmed = window.confirm(`Delete employee ${employeeDisplay(employee)}? Logs will remain as Unassigned.`);
+    if (!confirmed) return;
+    setDeletingId(employee.id);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/employees/${employee.id}`, { method: "DELETE" });
+      onRefresh();
+    } catch (exc) {
+      setError(exc.message);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <span className="eyebrow">Vision - Quality Analytics</span>
+          <h1>Employees</h1>
+          <p>Employee directory for process change logs</p>
+        </div>
+        <div className="actions">
+          <button type="button" className="button-primary" onClick={onOpenCreate}>
+            <UserPlus size={17} /> Add Employee
+          </button>
+        </div>
+      </header>
+
+      {loading ? <div className="loading">Loading employees...</div> : null}
+      {error ? <div className="error">{error}</div> : null}
+
+      <section className="employee-screen">
+        <table className="employee-table">
+          <thead>
+            <tr>
+              <th>Employee number</th>
+              <th>Full name</th>
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedEmployees.length ? sortedEmployees.map((employee) => (
+              <tr className="employee-table-row" key={employee.id}>
+                <td className="employee-table-number">{employee.employee_number}</td>
+                <td className="employee-table-name">{employee.full_name}</td>
+                <td className="employee-table-actions">
+                  <button type="button" className="icon-button" onClick={() => onOpenEdit(employee)} aria-label="Edit employee">
+                    <Pencil size={14} />
+                  </button>
+                  <button type="button" className="icon-button" onClick={() => deleteEmployee(employee)} disabled={deletingId === employee.id} aria-label="Delete employee">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td className="empty-option" colSpan="3">No employees yet. Add one from this screen.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    </>
   );
 }
 
@@ -1713,6 +1953,7 @@ function ChangeLogScreen({ entries, onRefresh }) {
               <th>Date</th>
               <th>Machine</th>
               <th>Side</th>
+              <th>Employee</th>
               <th>Category</th>
               <th>Label</th>
               <th>Description</th>
@@ -1725,6 +1966,7 @@ function ChangeLogScreen({ entries, onRefresh }) {
                 <td className="change-log-row-date">{entry.change_date}{entry.change_time ? ` ${entry.change_time.slice(0, 5)}` : ""}</td>
                 <td className="change-log-row-machine">{stationPairName(entry.station_pair)}</td>
                 <td className="change-log-row-side">{entry.side}</td>
+                <td className="change-log-row-employee">{entry.employee_number && entry.employee_name ? `${entry.employee_number} - ${entry.employee_name}` : "Unassigned"}</td>
                 <td><span className="change-log-row-category">{entry.category}</span></td>
                 <td className="change-log-row-label">{entry.category === "Other" ? entry.label : ""}</td>
                 <td className="change-log-row-desc">{entry.description || "No description"}</td>
@@ -1736,7 +1978,7 @@ function ChangeLogScreen({ entries, onRefresh }) {
               </tr>
             )) : (
               <tr>
-                <td className="empty-option" colSpan="7">No logs yet. Add one from Add Log.</td>
+                <td className="empty-option" colSpan="8">No logs yet. Add one from Add Log.</td>
               </tr>
             )}
           </tbody>
@@ -2073,6 +2315,10 @@ function App() {
   const [showRemoteSyncManager, setShowRemoteSyncManager] = useState(false);
   const [remoteSyncRun, setRemoteSyncRun] = useState(EMPTY_SYNC_RUN);
   const [remoteSyncHistory, setRemoteSyncHistory] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+  const [showEmployeeManager, setShowEmployeeManager] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
 
   useEffect(() => {
     setOptionsLoading(true);
@@ -2091,14 +2337,25 @@ function App() {
   };
 
   const reloadChangeLog = () => {
-    fetchJson("/api/v1/change-log")
+    return fetchJson("/api/v1/change-log")
       .then((payload) => setChangeLogEntries(payload.items || []))
       .catch(() => {});
   };
 
+  const reloadEmployees = () => {
+    setEmployeesLoading(true);
+    return fetchJson("/api/v1/employees")
+      .then((payload) => setEmployees(payload.items || []))
+      .catch(() => {})
+      .finally(() => setEmployeesLoading(false));
+  };
+
+  const reloadEmployeesAndChangeLog = () => Promise.all([reloadEmployees(), reloadChangeLog()]);
+
   useEffect(() => {
     reloadProjects();
     reloadChangeLog();
+    reloadEmployees();
   }, []);
 
   const apiFilters = useMemo(() => dashboardFilters(filters), [filters]);
@@ -2195,6 +2452,11 @@ function App() {
     applyFilters({ ...filters, station_pairs: [] });
   }
 
+  function closeEmployeeManager() {
+    setShowEmployeeManager(false);
+    setEditingEmployee(null);
+  }
+
   const showByHead = viewLevel.type === "head";
   const showAllMachines = viewLevel.type === "machine" && viewLevel.pair === MACHINE_ALL;
   const showOverall = viewLevel.type === "overall";
@@ -2248,6 +2510,7 @@ function App() {
         loading={loading}
         onOpenGlidepath={() => setShowGlidepathManager(true)}
         onOpenChangeLog={() => setShowChangeLogManager(true)}
+        onOpenEmployees={() => setActiveScreen("employees")}
         onOpenChanges={() => setActiveScreen("changes")}
       />
       {showGlidepathManager ? (
@@ -2262,13 +2525,36 @@ function App() {
         <ChangeLogManager
           pairOptions={stationPairOptions(options)}
           optionsLoading={optionsLoading}
+          employees={employees}
+          employeesLoading={employeesLoading}
           onClose={() => setShowChangeLogManager(false)}
           onRefresh={reloadChangeLog}
+        />
+      ) : null}
+      {showEmployeeManager ? (
+        <AddEmployeeModal
+          employee={editingEmployee}
+          onClose={closeEmployeeManager}
+          onRefresh={reloadEmployeesAndChangeLog}
         />
       ) : null}
       <main>
         {activeScreen === "changes" ? (
           <ChangeLogScreen entries={changeLogEntries} onRefresh={reloadChangeLog} />
+        ) : activeScreen === "employees" ? (
+          <EmployeeScreen
+            employees={employees}
+            loading={employeesLoading}
+            onOpenCreate={() => {
+              setEditingEmployee(null);
+              setShowEmployeeManager(true);
+            }}
+            onOpenEdit={(employee) => {
+              setEditingEmployee(employee);
+              setShowEmployeeManager(true);
+            }}
+            onRefresh={reloadEmployeesAndChangeLog}
+          />
         ) : (
           <>
         <header className="topbar">
