@@ -1,3 +1,4 @@
+import hmac
 import os
 from datetime import date, time
 from io import BytesIO
@@ -7,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app import change_log, glidepath, reports, scrap
+from app.config import load_env_file
 from app.db import close_db, get_db
 from app.migrator import run_migrations
 from app.sync_runner import sync_runner
@@ -54,6 +56,20 @@ def handle_report_error(exc):
     raise exc
 
 
+class SyncStartRequest(BaseModel):
+    password: str
+
+
+def _require_sync_password(password):
+    load_env_file()
+    configured_password = os.getenv("SYNC_START_PASSWORD")
+    if configured_password is None or not configured_password.strip():
+        raise HTTPException(status_code=503, detail="SYNC_START_PASSWORD is not configured")
+
+    if not hmac.compare_digest(str(password), configured_password.strip()):
+        raise HTTPException(status_code=401, detail="Invalid sync password")
+
+
 @app.get("/health")
 def health():
     try:
@@ -69,7 +85,8 @@ def options(db=Depends(db_dependency)):
 
 
 @app.post("/api/v1/sync-db")
-def start_database_sync():
+def start_database_sync(payload: SyncStartRequest):
+    _require_sync_password(payload.password)
     return sync_runner.start()
 
 

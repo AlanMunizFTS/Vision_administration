@@ -1379,8 +1379,19 @@ async function apiRequest(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    let message = `Request failed: ${response.status}`;
+    try {
+      const data = await response.clone().json();
+      if (Array.isArray(data.detail)) {
+        message = data.detail.map((item) => item.msg || String(item)).join(", ");
+      } else if (data.detail) {
+        message = String(data.detail);
+      }
+    } catch {
+      const text = await response.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -2697,7 +2708,7 @@ function syncStationStates(status, logs) {
       ...station,
       status: state,
       label: state === "running" ? "Loading" : state === "success" ? "Completed" : state === "error" ? "Failed" : "Pending",
-      lastSync: state === "success" ? status.finished_at || status.started_at : null
+      lastSync: state === "success" || state === "error" ? status.finished_at || status.started_at : null
     };
   });
 }
@@ -2736,6 +2747,7 @@ function syncRunFromStatus(status) {
 function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose }) {
   const pollRef = useRef(null);
   const lastHistoryKeyRef = useRef(null);
+  const [syncPassword, setSyncPassword] = useState("");
   const running = run.status === "running";
 
   useEffect(() => () => {
@@ -2819,6 +2831,7 @@ function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose })
 
   async function startSync(event) {
     event.preventDefault();
+    const submittedPassword = syncPassword;
 
     onRunChange({
       status: "running",
@@ -2831,18 +2844,24 @@ function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose })
     });
 
     try {
-      const status = await apiRequest("/api/v1/sync-db", { method: "POST" });
+      const status = await apiRequest("/api/v1/sync-db", {
+        method: "POST",
+        body: JSON.stringify({ password: submittedPassword })
+      });
+      setSyncPassword("");
       onRunChange(syncRunFromStatus(status));
       startPolling();
     } catch (error) {
+      setSyncPassword("");
+      const errorMessage = error.message || "Could not start sync";
       onRunChange({
         status: "error",
         progress: 100,
-        logs: [{ id: `${Date.now()}-start-error`, time: syncTimestamp(), level: "error", line: error.message }],
+        logs: [{ id: `${Date.now()}-start-error`, time: syncTimestamp(), level: "error", line: errorMessage }],
         stations: syncStationStates({ running: false, finished_at: new Date().toISOString(), return_code: 1 }, []),
         startedAt: new Date().toISOString(),
         finishedAt: new Date().toISOString(),
-        summary: "Could not start sync"
+        summary: errorMessage
       });
     }
   }
@@ -2869,8 +2888,19 @@ function RemoteSyncManager({ run, history, onRunChange, onHistoryAdd, onClose })
         </div>
 
         <form className="remote-sync-form" onSubmit={startSync}>
-          <button type="submit" className="button-primary" disabled={running}>
-            <RefreshCw size={15} />
+          <label className="remote-sync-password">
+            Password
+            <input
+              type="password"
+              value={syncPassword}
+              onChange={(event) => setSyncPassword(event.target.value)}
+              autoComplete="current-password"
+              disabled={running}
+              required
+            />
+          </label>
+          <button type="submit" className="button-danger" disabled={running}>
+            <AlertTriangle size={15} />
             {running ? "Loading" : "Start Sync"}
           </button>
         </form>
@@ -3257,8 +3287,8 @@ function App() {
           </div>
           <div className="actions">
             <div className="sync-action">
-              <button type="button" className="button-primary" onClick={() => setShowRemoteSyncManager((current) => !current)} title="Remote Sync">
-                <RefreshCw size={17} />
+              <button type="button" className="button-danger" onClick={() => setShowRemoteSyncManager((current) => !current)} title="Remote Sync">
+                <AlertTriangle size={17} />
                 Sync
               </button>
               {showRemoteSyncManager ? (
