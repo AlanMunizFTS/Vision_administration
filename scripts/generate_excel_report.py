@@ -125,6 +125,26 @@ def _date_label(value):
     return str(value or "")[:10]
 
 
+def _selected_date_labels(report_params):
+    if not report_params:
+        return []
+    try:
+        start_at = parse_datetime(report_params.start_at, "start_at")
+        end_at = parse_datetime(report_params.end_at, "end_at")
+    except ReportError:
+        return []
+    if end_at < start_at:
+        return []
+
+    current = start_at.date()
+    last = end_at.date()
+    labels = []
+    while current <= last:
+        labels.append(current.isoformat())
+        current += timedelta(days=1)
+    return labels
+
+
 def _station_name(value):
     text = str(value or "").strip()
     if not text:
@@ -446,8 +466,8 @@ def _condition_classes(rows):
     return sorted(totals)
 
 
-def _condition_daily_rows(rows, classes):
-    by_date = {}
+def _condition_daily_rows(rows, classes, dates=None):
+    by_date = {day: {"reject_date": day, "total_nok": 0} for day in dates or []}
     for row in rows or []:
         class_name = _defect_name(row.get("class_name"))
         nok_pieces = _normalize_int(row.get("nok_pieces"))
@@ -686,12 +706,12 @@ def _daily_block_value(row):
     ]
 
 
-def _daily_layout(data):
+def _daily_layout(data, report_params=None):
     daily_rows = data.get("daily") or []
     combined_rows = ((data.get("combined") or {}).get("daily")) or []
     groups = {}
     by_block_date = {}
-    dates = set()
+    dates = set(_selected_date_labels(report_params))
 
     for row in daily_rows:
         day = _date_label(row.get("reject_date"))
@@ -750,7 +770,7 @@ def _write_daily_sheet(workbook, data, report_params):
     sheet = workbook.active
     sheet.title = "By Day"
     _write_filter_band(sheet, report_params)
-    dates, groups, by_block_date = _daily_layout(data)
+    dates, groups, by_block_date = _daily_layout(data, report_params)
     header_fill = PatternFill(fill_type="solid", fgColor="404040")
     header_font = Font(color="FFFFFF", bold=True)
     stripe_fill = PatternFill(fill_type="solid", fgColor="F2F2F2")
@@ -854,6 +874,7 @@ def _write_daily_sheet(workbook, data, report_params):
     if dates and series_cols:
         chart = LineChart()
         chart.title = "Reject Rate (% NOK) by Day"
+        chart.display_blanks = "gap"
         chart.y_axis.title = "% NOK"
         chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
@@ -924,6 +945,7 @@ def _append_combined_daily_section(sheet, data):
     if rows and stations:
         chart = LineChart()
         chart.title = "Combined LEFT+RIGHT - Reject Rate (% NOK) by Day"
+        chart.display_blanks = "gap"
         chart.y_axis.title = "% NOK"
         chart.x_axis.title = "Date"
         chart.y_axis.scaling.min = 0
@@ -939,7 +961,7 @@ def _append_combined_daily_section(sheet, data):
         sheet.add_chart(chart, f"{get_column_letter(len(headers) + 2)}{header_row}")
 
 
-def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=None):
+def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=None, selected_dates=None):
     sheet = workbook.create_sheet("Per Condition")
     condition_ranges = condition_ranges if condition_ranges is not None else {}
     stations = _condition_station_list(data)
@@ -960,7 +982,7 @@ def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=N
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
         headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
-        daily_rows = _condition_daily_rows(periods, classes)
+        daily_rows = _condition_daily_rows(periods, classes, selected_dates)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
             f"tblConditionDaily{station_idx}",
@@ -995,7 +1017,7 @@ def _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges=N
     return sheet
 
 
-def _append_combined_conditions_section(sheet, data, colors_by_defect, condition_ranges=None):
+def _append_combined_conditions_section(sheet, data, colors_by_defect, condition_ranges=None, selected_dates=None):
     combined_data = _combined_as_station_data(data)
     condition_ranges = condition_ranges if condition_ranges is not None else {}
     stations = _condition_station_list(combined_data)
@@ -1017,7 +1039,7 @@ def _append_combined_conditions_section(sheet, data, colors_by_defect, condition
         periods = periods_by_station.get(station) or []
         classes = _condition_classes(periods)
         headers = ["Date", *classes, "Total NOK"] if classes else ["Date", "Total NOK"]
-        daily_rows = _condition_daily_rows(periods, classes)
+        daily_rows = _condition_daily_rows(periods, classes, selected_dates)
         header_row, daily_max_row, daily_max_col, total_row = _append_condition_daily_table(
             sheet,
             f"tblCombinedConditionDaily{station_idx}",
@@ -1140,14 +1162,15 @@ def _append_combined_top3_section(sheet, data, colors_by_defect, condition_range
 def build_workbook(report_params, data):
     workbook = Workbook()
     data = _apply_part_number_filter(data, report_params.part_numbers) if report_params.filter_part_numbers else (data or {})
+    selected_dates = _selected_date_labels(report_params)
     colors_by_defect = _defect_color_map(data)
     combined_colors_by_defect = _defect_color_map(_combined_as_station_data(data))
     condition_ranges = {}
     combined_condition_ranges = {}
     daily_sheet = _write_daily_sheet(workbook, data, report_params)
     _fit_columns(daily_sheet)
-    conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges)
-    _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect, combined_condition_ranges)
+    conditions_sheet = _write_conditions_sheet(workbook, data, colors_by_defect, condition_ranges, selected_dates)
+    _append_combined_conditions_section(conditions_sheet, data, combined_colors_by_defect, combined_condition_ranges, selected_dates)
     top3_sheet = _write_top3_sheet(workbook, data, colors_by_defect, condition_ranges)
     _append_combined_top3_section(top3_sheet, data, combined_colors_by_defect, combined_condition_ranges)
     return workbook
