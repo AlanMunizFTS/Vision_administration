@@ -368,6 +368,17 @@ button:disabled {
   border-color: #15803d;
 }
 
+.button-danger {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.button-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 /* ---------- KPI summary row ---------- */
 
 .kpi-row {
@@ -989,6 +1000,16 @@ button:focus-visible {
   justify-content: flex-start;
   align-items: center;
   gap: 10px;
+}
+
+.remote-sync-password {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.remote-sync-password input:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
 }
 
 .remote-sync-status {
@@ -1757,6 +1778,11 @@ tbody tr:nth-child(even):hover {
     left: 0;
     right: auto;
     width: min(520px, calc(100vw - 24px));
+  }
+
+  .remote-sync-form {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .remote-sync-form button {
