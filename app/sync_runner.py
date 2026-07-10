@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -9,8 +10,9 @@ from app.config import load_env_file
 
 
 APP_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = APP_DIR.parent
 SYNC_SCRIPT = APP_DIR / "IE_db.py"
-DEFAULT_SYNC_LOG = APP_DIR / "sync.log"
+DEFAULT_SYNC_LOG = PROJECT_DIR / "reports" / "sync.log"
 
 
 def get_sync_log_path():
@@ -50,6 +52,7 @@ class SyncRunner:
             sync_config = get_sync_config_path()
             sync_log = get_sync_log_path()
             sync_log.parent.mkdir(parents=True, exist_ok=True)
+            sync_log.write_text("", encoding="utf-8")
             self._process = subprocess.Popen(
                 [
                     sys.executable,
@@ -79,6 +82,7 @@ class SyncRunner:
                 "return_code": self._return_code,
                 "log_path": str(get_sync_log_path()),
                 "log_tail": self._log_tail(),
+                "station_statuses": self._station_statuses(running),
             }
 
     def _refresh_locked(self):
@@ -93,7 +97,7 @@ class SyncRunner:
             self._return_code = return_code
             self._finished_at = datetime.now()
 
-    def _log_tail(self, max_lines=160):
+    def _latest_run_lines(self):
         sync_log = get_sync_log_path()
         if not sync_log.exists():
             return []
@@ -107,7 +111,47 @@ class SyncRunner:
                 start_index = index
 
         latest_run_lines = lines[start_index:]
+        return [line.rstrip("\n") for line in latest_run_lines]
+
+    def _log_tail(self, max_lines=160):
+        latest_run_lines = self._latest_run_lines()
         return [line.rstrip("\n") for line in latest_run_lines[-max_lines:]]
+
+    def _station_statuses(self, running):
+        statuses = {}
+        current_station = None
+
+        for line in self._latest_run_lines():
+            message = self._log_message(line)
+            process_match = re.search(r"Procesando estacion:\s*([A-Za-z0-9_-]+)", message)
+            if process_match:
+                current_station = process_match.group(1)
+                statuses[current_station] = "running"
+                continue
+
+            success_match = re.search(r"Finalizado OK:\s*([A-Za-z0-9_-]+)", message)
+            if success_match:
+                station = success_match.group(1)
+                statuses[station] = "success"
+                current_station = None
+                continue
+
+            error_match = re.search(r"ERROR en\s+([A-Za-z0-9_-]+):", message)
+            if error_match:
+                station = error_match.group(1)
+                statuses[station] = "error"
+                current_station = None
+                continue
+
+        if not running:
+            for station, state in list(statuses.items()):
+                if state == "running":
+                    statuses[station] = "error"
+        return statuses
+
+    @staticmethod
+    def _log_message(line):
+        return re.sub(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\[[A-Z]+\]\s*", "", line or "")
 
     @staticmethod
     def _format_datetime(value):

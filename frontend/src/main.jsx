@@ -2676,13 +2676,22 @@ function syncLineMentionsStation(line, station) {
 function syncStationStates(status, logs) {
   const running = Boolean(status.running);
   const finished = Boolean(status.finished_at);
-  const failed = finished && status.return_code !== 0;
 
   return SYNC_STATIONS.map((station) => {
-    const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
-    const hasSuccess = stationLogs.some((log) => /finalizado ok|importacion ok/i.test(log.line));
-    const hasError = stationLogs.some((log) => log.level === "error" || /error en/i.test(log.line));
-    const state = hasError || (failed && !hasSuccess) ? "error" : hasSuccess ? "success" : running ? "running" : "idle";
+    let state = status.station_statuses?.[station.key];
+
+    if (!state) {
+      const stationLogs = logs.filter((log) => syncLineMentionsStation(log.line, station));
+      state = stationLogs.length || running ? "running" : "idle";
+
+      for (const log of stationLogs) {
+        if (/procesando estacion/i.test(log.line)) state = "running";
+        if (/error en/i.test(log.line)) state = "error";
+        if (/finalizado ok|importacion ok/i.test(log.line)) state = "success";
+      }
+    }
+
+    if (!running && state === "running") state = "error";
 
     return {
       ...station,
