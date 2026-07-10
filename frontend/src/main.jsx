@@ -673,6 +673,35 @@ function partNumberBandColor(partNumber, knownPartNumbers) {
   return PART_NUMBER_BAND_COLORS[(index < 0 ? 0 : index) % PART_NUMBER_BAND_COLORS.length];
 }
 
+function isWeekendDay(day) {
+  const date = parseDateTime(`${day}T00:00:00`);
+  if (!date) return false;
+  return date.getDay() === 0 || date.getDay() === 6;
+}
+
+function weekendBands(rows = [], isHourly = false) {
+  const bands = [];
+  let current = null;
+  rows.forEach((row, index) => {
+    const label = row.reject_date;
+    const day = isHourly ? dateLabel(row.bucket_start) : dateLabel(label);
+    const nextLabel = rows[index + 1]?.reject_date || "";
+    if (!label || !day || !isWeekendDay(day)) {
+      if (current) bands.push(current);
+      current = null;
+      return;
+    }
+
+    if (!current) {
+      current = { start: label, end: nextLabel || label };
+    }
+
+    if (nextLabel) current.end = nextLabel;
+  });
+  if (current) bands.push(current);
+  return bands;
+}
+
 function topHistoryRows(rows = [], dateRange) {
   const byDate = {};
   for (const day of selectedDayLabels(dateRange)) {
@@ -822,6 +851,10 @@ function DailyTab({ data, stations, title, dateRange, showPartNumberBands = true
       ? partNumberBands(data?.hourly_by_part, orderedDates, (row) => hourLabel(row.bucket_start))
       : partNumberBands(data?.daily_by_part, orderedDates, (row) => dateLabel(row.reject_date));
   }, [data, orderedDates.join("|"), isHourly, showPartNumberBands]);
+  const weekendHighlights = useMemo(
+    () => weekendBands(rows, isHourly),
+    [rows, isHourly]
+  );
   const knownPartNumbers = [...new Set(bands.flatMap((band) => band.partNumbers))];
   const mixedBands = bands.filter((band) => band.partNumbers.length > 1);
   const changeMarkers = useMemo(
@@ -886,6 +919,18 @@ function DailyTab({ data, stations, title, dateRange, showPartNumberBands = true
                     ifOverflow="visible"
                   />
                 ))}
+                {weekendHighlights.map((band, index) => (
+                  <ReferenceArea
+                    key={`weekend-${band.start}-${index}`}
+                    x1={band.start}
+                    x2={band.end}
+                    fill="#e5e7eb"
+                    fillOpacity={0.72}
+                    stroke="#9ca3af"
+                    strokeOpacity={0.28}
+                    ifOverflow="visible"
+                  />
+                ))}
                 {stations.map((station, index) => (
                   <Line
                     key={station || "blank"}
@@ -943,8 +988,14 @@ function DailyTab({ data, stations, title, dateRange, showPartNumberBands = true
             ))}
           </div>
         ) : null}
-        {knownPartNumbers.length ? (
+        {weekendHighlights.length || knownPartNumbers.length ? (
           <div className="pn-legend">
+            {weekendHighlights.length ? (
+              <span className="pn-legend-item">
+                <span className="pn-legend-swatch weekend" />
+                Weekend
+              </span>
+            ) : null}
             {knownPartNumbers.map((partNumber) => (
               <span className="pn-legend-item" key={partNumber}>
                 <span className="pn-legend-swatch" style={{ background: partNumberBandColor(partNumber, knownPartNumbers) }} />
