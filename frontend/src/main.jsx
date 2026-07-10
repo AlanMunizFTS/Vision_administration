@@ -160,6 +160,75 @@ function hourLabel(value) {
   return `${text.slice(5, 10)} ${text.slice(11, 16)}`;
 }
 
+function parseDateTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const normalized = text.includes("T") ? text : text.replace(" ", "T");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateParts(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return {
+    year: date.getFullYear(),
+    month: pad(date.getMonth() + 1),
+    day: pad(date.getDate()),
+    hour: pad(date.getHours())
+  };
+}
+
+function formatDay(date) {
+  const parts = dateParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function formatHourBucket(date) {
+  const parts = dateParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:00:00`;
+}
+
+function selectedDayLabels(dateRange) {
+  const start = parseDateTime(dateRange?.start_at);
+  const end = parseDateTime(dateRange?.end_at);
+  if (!start || !end || end < start) return [];
+
+  const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const labels = [];
+  while (current <= last) {
+    labels.push(formatDay(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return labels;
+}
+
+function selectedHourBuckets(dateRange) {
+  const start = parseDateTime(dateRange?.start_at);
+  const end = parseDateTime(dateRange?.end_at);
+  if (!start || !end || end < start) return [];
+
+  const current = new Date(start);
+  current.setMinutes(0, 0, 0);
+  const labels = [];
+  while (current <= end) {
+    labels.push(formatHourBucket(current));
+    current.setHours(current.getHours() + 1);
+  }
+  return labels;
+}
+
+function hourBucketKey(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  return `${text.slice(0, 10)}T${text.slice(11, 13)}`;
+}
+
+function hourBucketLabel(bucketKey) {
+  if (!bucketKey) return "";
+  return `${bucketKey.slice(5, 10)} ${bucketKey.slice(11, 13)}:00`;
+}
+
 function stationName(value) {
   const text = String(value || "").trim();
   if (!text) return "No station";
@@ -527,8 +596,11 @@ function changeLogMarkers(entries, chartRows, isHourly) {
   return markers;
 }
 
-function dailyChartRows(data, stations) {
+function dailyChartRows(data, stations, dateRange) {
   const byDate = {};
+  for (const day of selectedDayLabels(dateRange)) {
+    byDate[day] = { reject_date: day };
+  }
   for (const row of data?.daily || []) {
     const day = dateLabel(row.reject_date);
     if (!byDate[day]) byDate[day] = { reject_date: day };
@@ -542,15 +614,20 @@ function dailyChartRows(data, stations) {
   });
 }
 
-function hourlyChartRows(data, stations) {
+function hourlyChartRows(data, stations, dateRange) {
   const byHour = {};
+  for (const bucketStart of selectedHourBuckets(dateRange)) {
+    const key = hourBucketKey(bucketStart);
+    byHour[key] = { bucket_start: bucketStart, reject_date: hourBucketLabel(key) };
+  }
   for (const row of data?.hourly || []) {
     const bucketStart = String(row.bucket_start || "");
     if (!bucketStart) continue;
-    if (!byHour[bucketStart]) byHour[bucketStart] = { bucket_start: bucketStart, reject_date: hourLabel(bucketStart) };
-    byHour[bucketStart][row.source_station || ""] = Number(row.pct_nok || 0) * 100;
+    const key = hourBucketKey(bucketStart);
+    if (!byHour[key]) byHour[key] = { bucket_start: bucketStart, reject_date: hourLabel(bucketStart) };
+    byHour[key][row.source_station || ""] = Number(row.pct_nok || 0) * 100;
   }
-  return Object.values(byHour).sort((a, b) => a.bucket_start.localeCompare(b.bucket_start)).map((row) => {
+  return Object.values(byHour).sort((a, b) => hourBucketKey(a.bucket_start).localeCompare(hourBucketKey(b.bucket_start))).map((row) => {
     for (const station of stations) {
       if (row[station] === undefined) row[station] = null;
     }
@@ -596,8 +673,40 @@ function partNumberBandColor(partNumber, knownPartNumbers) {
   return PART_NUMBER_BAND_COLORS[(index < 0 ? 0 : index) % PART_NUMBER_BAND_COLORS.length];
 }
 
-function topHistoryRows(rows = []) {
+function isWeekendDay(day) {
+  const date = parseDateTime(`${day}T00:00:00`);
+  if (!date) return false;
+  return date.getDay() === 0 || date.getDay() === 6;
+}
+
+function weekendBands(rows = [], isHourly = false) {
+  const bands = [];
+  let current = null;
+  rows.forEach((row, index) => {
+    const label = row.reject_date;
+    const day = isHourly ? dateLabel(row.bucket_start) : dateLabel(label);
+    const nextLabel = rows[index + 1]?.reject_date || "";
+    if (!label || !day || !isWeekendDay(day)) {
+      if (current) bands.push(current);
+      current = null;
+      return;
+    }
+
+    if (!current) {
+      current = { start: label, end: nextLabel || label };
+    }
+
+    if (nextLabel) current.end = nextLabel;
+  });
+  if (current) bands.push(current);
+  return bands;
+}
+
+function topHistoryRows(rows = [], dateRange) {
   const byDate = {};
+  for (const day of selectedDayLabels(dateRange)) {
+    byDate[day] = { reject_date: day };
+  }
   for (const row of rows) {
     const day = dateLabel(row.reject_date);
     if (!byDate[day]) byDate[day] = { reject_date: day };
@@ -726,10 +835,10 @@ function TableToggle({ label, children }) {
   );
 }
 
-function DailyTab({ data, stations, title, showPartNumberBands = true, glidepathSubprojects = [], changeLogEntries = [] }) {
+function DailyTab({ data, stations, title, dateRange, showPartNumberBands = true, glidepathSubprojects = [], changeLogEntries = [] }) {
   const [granularity, setGranularity] = useState("day");
   const isHourly = granularity === "hour";
-  const rawRows = isHourly ? hourlyChartRows(data, stations) : dailyChartRows(data, stations);
+  const rawRows = isHourly ? hourlyChartRows(data, stations, dateRange) : dailyChartRows(data, stations, dateRange);
   const rows = useMemo(
     () => glidepathChartRows(rawRows, glidepathSubprojects, isHourly ? "bucket_start" : "reject_date"),
     [rawRows, glidepathSubprojects, isHourly]
@@ -742,6 +851,10 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
       ? partNumberBands(data?.hourly_by_part, orderedDates, (row) => hourLabel(row.bucket_start))
       : partNumberBands(data?.daily_by_part, orderedDates, (row) => dateLabel(row.reject_date));
   }, [data, orderedDates.join("|"), isHourly, showPartNumberBands]);
+  const weekendHighlights = useMemo(
+    () => weekendBands(rows, isHourly),
+    [rows, isHourly]
+  );
   const knownPartNumbers = [...new Set(bands.flatMap((band) => band.partNumbers))];
   const mixedBands = bands.filter((band) => band.partNumbers.length > 1);
   const changeMarkers = useMemo(
@@ -806,6 +919,18 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
                     ifOverflow="visible"
                   />
                 ))}
+                {weekendHighlights.map((band, index) => (
+                  <ReferenceArea
+                    key={`weekend-${band.start}-${index}`}
+                    x1={band.start}
+                    x2={band.end}
+                    fill="#e5e7eb"
+                    fillOpacity={0.72}
+                    stroke="#9ca3af"
+                    strokeOpacity={0.28}
+                    ifOverflow="visible"
+                  />
+                ))}
                 {stations.map((station, index) => (
                   <Line
                     key={station || "blank"}
@@ -815,7 +940,6 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
                     stroke={COLORS[index % COLORS.length]}
                     strokeWidth={2}
                     dot={false}
-                    connectNulls
                   />
                 ))}
                 {glidepathSubprojects.map((subproject) => (
@@ -864,8 +988,14 @@ function DailyTab({ data, stations, title, showPartNumberBands = true, glidepath
             ))}
           </div>
         ) : null}
-        {knownPartNumbers.length ? (
+        {weekendHighlights.length || knownPartNumbers.length ? (
           <div className="pn-legend">
+            {weekendHighlights.length ? (
+              <span className="pn-legend-item">
+                <span className="pn-legend-swatch weekend" />
+                Weekend
+              </span>
+            ) : null}
             {knownPartNumbers.map((partNumber) => (
               <span className="pn-legend-item" key={partNumber}>
                 <span className="pn-legend-swatch" style={{ background: partNumberBandColor(partNumber, knownPartNumbers) }} />
@@ -1009,7 +1139,7 @@ function ConditionsTab({ data, stations, colorsByDefect, title }) {
   );
 }
 
-function Top3Tab({ data, stations, colorsByDefect, title }) {
+function Top3Tab({ data, stations, colorsByDefect, title, dateRange }) {
   const historyByStation = groupBy(data?.top3_history || [], "source_station");
   const countAxisMax = niceAxisMax((data?.top3_history || []).map((row) => row.nok_pieces));
 
@@ -1020,7 +1150,7 @@ function Top3Tab({ data, stations, colorsByDefect, title }) {
         {stations.length ? stations.map((station) => {
           const history = historyByStation[station] || [];
           const classes = classNames(history);
-          const rows = topHistoryRows(history);
+          const rows = topHistoryRows(history, dateRange);
           const totals = classes.map((name) => {
             const first = history.find((row) => defectName(row.class_name) === name);
             return {
@@ -3181,16 +3311,16 @@ function App() {
             <div className="head-column">
               <SectionTitle>{stationName(leftStation) || "Left"}</SectionTitle>
               <KpiRow data={leftData} stationCount={leftStation ? 1 : 0} />
-              {activeTab === "daily" ? <DailyTab data={leftData} stations={[leftStation]} glidepathSubprojects={leftSubprojects} changeLogEntries={leftChangeLogEntries} /> : null}
+              {activeTab === "daily" ? <DailyTab data={leftData} stations={[leftStation]} dateRange={appliedFilters} glidepathSubprojects={leftSubprojects} changeLogEntries={leftChangeLogEntries} /> : null}
               {activeTab === "conditions" ? <ConditionsTab data={leftData} stations={[leftStation]} colorsByDefect={colorsByDefect} /> : null}
-              {activeTab === "top3" ? <Top3Tab data={leftData} stations={[leftStation]} colorsByDefect={colorsByDefect} /> : null}
+              {activeTab === "top3" ? <Top3Tab data={leftData} stations={[leftStation]} colorsByDefect={colorsByDefect} dateRange={appliedFilters} /> : null}
             </div>
             <div className="head-column">
               <SectionTitle>{stationName(rightStation) || "Right"}</SectionTitle>
               <KpiRow data={rightData} stationCount={rightStation ? 1 : 0} />
-              {activeTab === "daily" ? <DailyTab data={rightData} stations={[rightStation]} glidepathSubprojects={rightSubprojects} changeLogEntries={rightChangeLogEntries} /> : null}
+              {activeTab === "daily" ? <DailyTab data={rightData} stations={[rightStation]} dateRange={appliedFilters} glidepathSubprojects={rightSubprojects} changeLogEntries={rightChangeLogEntries} /> : null}
               {activeTab === "conditions" ? <ConditionsTab data={rightData} stations={[rightStation]} colorsByDefect={colorsByDefect} /> : null}
-              {activeTab === "top3" ? <Top3Tab data={rightData} stations={[rightStation]} colorsByDefect={colorsByDefect} /> : null}
+              {activeTab === "top3" ? <Top3Tab data={rightData} stations={[rightStation]} colorsByDefect={colorsByDefect} dateRange={appliedFilters} /> : null}
             </div>
           </div>
         ) : null}
@@ -3199,6 +3329,7 @@ function App() {
           <DailyTab
             data={displayData}
             stations={displayStations}
+            dateRange={appliedFilters}
             showPartNumberBands={viewLevel.type !== "overall"}
             glidepathSubprojects={activeSubprojects}
             changeLogEntries={scopedChangeLogEntries}
@@ -3208,7 +3339,7 @@ function App() {
           <ConditionsTab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
         ) : null}
         {visibleData && !showByHead && activeTab === "top3" ? (
-          <Top3Tab data={displayData} stations={displayStations} colorsByDefect={displayColors} />
+          <Top3Tab data={displayData} stations={displayStations} colorsByDefect={displayColors} dateRange={appliedFilters} />
         ) : null}
         {!visibleData && !loading ? <Empty label="No data loaded" /> : null}
           </>

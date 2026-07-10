@@ -249,23 +249,27 @@ class GenerateExcelReportTests(unittest.TestCase):
         self.assertEqual(daily["G6"].value, "Right")
         self.assertEqual(daily["L6"].value, "Combined")
         self.assertEqual([daily.cell(row=7, column=col).value for col in range(1, 7)], ["Date", "OK", "NOK", "Total", "% OK", "% NOK"])
-        self.assertEqual(daily["A8"].value, "2026-06-25")
-        self.assertEqual(daily["B8"].value, 3)
-        self.assertEqual(daily["G8"].value, "")
-        self.assertEqual(daily["L9"].value, 5)
-        self.assertEqual(daily["P9"].value, 0.375)
-        self.assertEqual(daily["F9"].number_format, "0.00%")
-        self.assertEqual(daily["K9"].number_format, "0.00%")
-        self.assertEqual(daily["P9"].number_format, "0.00%")
-        self.assertEqual(daily["F10"].value, "=AVERAGE(F8:F9)")
-        self.assertEqual(daily["K10"].value, "=AVERAGE(K8:K9)")
-        self.assertEqual(daily["P10"].value, "=AVERAGE(P8:P9)")
+        self.assertEqual(daily["A8"].value, "2026-06-19")
+        self.assertEqual(daily["A15"].value, "2026-06-26")
+        self.assertEqual(daily["B8"].value, "")
+        self.assertEqual(daily["B14"].value, 3)
+        self.assertEqual(daily["G14"].value, "")
+        self.assertEqual(daily["L15"].value, 5)
+        self.assertEqual(daily["P15"].value, 0.375)
+        self.assertEqual(daily["F15"].number_format, "0.00%")
+        self.assertEqual(daily["K15"].number_format, "0.00%")
+        self.assertEqual(daily["P15"].number_format, "0.00%")
+        self.assertEqual(daily["F16"].value, "=AVERAGE(F8:F15)")
+        self.assertEqual(daily["K16"].value, "=AVERAGE(K8:K15)")
+        self.assertEqual(daily["P16"].value, "=AVERAGE(P8:P15)")
         self.assertGreaterEqual(len(daily.conditional_formatting), 4)
         self.assertEqual(len(daily._charts), 1)
         self.assertGreaterEqual(len(workbook["Per Condition"]._charts), 1)
         self.assertGreaterEqual(len(workbook["Top 3 History"]._charts), 1)
         self.assertEqual(daily._charts[0].y_axis.scaling.min, 0)
         self.assertEqual(daily._charts[0].y_axis.scaling.max, 1)
+        self.assertEqual(daily._charts[0].display_blanks, "gap")
+        self.assertEqual(daily._charts[0].series[0].cat.numRef.f, "'By Day'!$A$8:$A$15")
 
     def test_build_workbook_displays_part_number_filters(self):
         data = deepcopy(SAMPLE_REJECT_SUMMARY)
@@ -280,7 +284,8 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         daily = workbook["By Day"]
         self.assertEqual(daily["C3"].value, "Part Number: PN-1, PN-2")
-        self.assertEqual(daily["A8"].value, "2026-06-25")
+        self.assertEqual(daily["A8"].value, "2026-06-19")
+        self.assertEqual(daily["A15"].value, "2026-06-26")
 
     def test_build_workbook_does_not_refilter_frontend_visible_data(self):
         params = ReportParams(
@@ -295,8 +300,8 @@ class GenerateExcelReportTests(unittest.TestCase):
 
         daily = workbook["By Day"]
         self.assertEqual(daily["C3"].value, "Part Number: PN-1")
-        self.assertEqual(daily["A8"].value, "2026-06-25")
-        self.assertEqual(daily["B8"].value, 3)
+        self.assertEqual(daily["A8"].value, "2026-06-19")
+        self.assertEqual(daily["B14"].value, 3)
 
     def test_build_workbook_displays_art_endform_stations_as_tesla_names(self):
         data = {
@@ -410,17 +415,17 @@ class GenerateExcelReportTests(unittest.TestCase):
         top3 = workbook["Top 3 History"]
         self.assertEqual(conditions["B2"].value, "DENT")
         self.assertEqual(conditions["C2"].value, "SCRATCH")
-        self.assertEqual(conditions["A5"].value, "Total")
-        self.assertEqual(conditions["B5"].value, "=SUM(B3:B4)")
-        self.assertEqual(conditions["C5"].value, "=SUM(C3:C4)")
-        self.assertEqual(conditions._charts[0].series[0].val.numRef.f, "'Per Condition'!$B$5:$C$5")
+        self.assertEqual(conditions["A11"].value, "Total")
+        self.assertEqual(conditions["B11"].value, "=SUM(B3:B10)")
+        self.assertEqual(conditions["C11"].value, "=SUM(C3:C10)")
+        self.assertEqual(conditions._charts[0].series[0].val.numRef.f, "'Per Condition'!$B$11:$C$11")
         self.assertEqual(conditions._charts[0].series[0].cat.numRef.f, "'Per Condition'!$B$2:$C$2")
         self.assertEqual(top3["B3"].value, "SCRATCH")
         self.assertEqual(top3["B4"].value, "DENT")
         self.assertNotIn("tblTop3History1", top3.tables)
-        self.assertEqual(top3._charts[0].series[0].val.numRef.f, "'Per Condition'!$C$3:$C$4")
-        self.assertEqual(top3._charts[0].series[1].val.numRef.f, "'Per Condition'!$B$3:$B$4")
-        self.assertEqual(top3._charts[0].series[0].cat.numRef.f, "'Per Condition'!$A$3:$A$4")
+        self.assertEqual(top3._charts[0].series[0].val.numRef.f, "'Per Condition'!$C$3:$C$10")
+        self.assertEqual(top3._charts[0].series[1].val.numRef.f, "'Per Condition'!$B$3:$B$10")
+        self.assertEqual(top3._charts[0].series[0].cat.numRef.f, "'Per Condition'!$A$3:$A$10")
         self.assertEqual(top3._charts[0].x_axis.tickLblPos, "low")
         self.assertEqual(top3._charts[0].y_axis.tickLblPos, "nextTo")
         self.assertEqual(top3._charts[0].y_axis.numFmt.formatCode, "0")
@@ -477,7 +482,8 @@ class GenerateExcelReportTests(unittest.TestCase):
             self.assertTrue(Path(output_path).exists())
             workbook = load_workbook(output_path)
             self.assertEqual(workbook.sheetnames, ["By Day", "Per Condition", "Top 3 History"])
-            self.assertEqual(workbook["By Day"]["A8"].value, "2026-06-25")
+            self.assertEqual(workbook["By Day"]["A8"].value, "2026-06-19")
+            self.assertEqual(workbook["By Day"]["A15"].value, "2026-06-26")
 
     def test_empty_data_still_creates_workbook(self):
         params = self.make_params()

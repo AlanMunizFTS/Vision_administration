@@ -1453,6 +1453,11 @@ button:focus-visible {
   border-radius: 3px;
 }
 
+.pn-legend-swatch.weekend {
+  background: #e5e7eb;
+  border: 1px solid #9ca3af;
+}
+
 .change-log-legend {
   display: flex;
   flex-wrap: wrap;
