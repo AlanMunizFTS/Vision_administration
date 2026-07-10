@@ -2708,7 +2708,7 @@ function syncStationStates(status, logs) {
       ...station,
       status: state,
       label: state === "running" ? "Loading" : state === "success" ? "Completed" : state === "error" ? "Failed" : "Pending",
-      lastSync: state === "success" ? status.finished_at || status.started_at : null
+      lastSync: state === "success" || state === "error" ? status.finished_at || status.started_at : null
     };
   });
 }

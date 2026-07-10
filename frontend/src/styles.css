@@ -1088,16 +1088,20 @@ button:focus-visible {
 
 .sync-led {
   flex: 0 0 auto;
-  width: 11px;
-  height: 11px;
+  position: relative;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   background: #cbd5e1;
   box-shadow: 0 0 0 3px rgba(203, 213, 225, 0.35);
 }
 
 .remote-sync-station.running .sync-led {
-  background: #eab308;
-  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.2);
+  border: 2px solid rgba(234, 179, 8, 0.28);
+  border-top-color: #eab308;
+  background: transparent;
+  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.14);
+  animation: sync-led-spin 0.8s linear infinite;
 }
 
 .remote-sync-station.success .sync-led {
@@ -1108,6 +1112,12 @@ button:focus-visible {
 .remote-sync-station.error .sync-led {
   background: #dc2626;
   box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
+}
+
+@keyframes sync-led-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .remote-sync-station div {
